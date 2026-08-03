@@ -25,8 +25,21 @@
 set -euo pipefail
 
 NAME="OpenTab Self-Signed"
+KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
+
+# A locked login keychain makes every write below fail with "User interaction is
+# not allowed" — an error that says nothing about keychains being locked. macOS
+# locks it after a period of inactivity, and on some configurations it is not
+# unlocked by logging in at all, so this is a normal state rather than an odd one.
+if ! security show-keychain-info "$KEYCHAIN" >/dev/null 2>&1; then
+    echo "==> Your login keychain is locked. Unlocking it (enter your login password):"
+    if ! security unlock-keychain "$KEYCHAIN"; then
+        echo "make-signing-cert: could not unlock the login keychain; nothing was changed." >&2
+        exit 1
+    fi
+fi
 
 if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$NAME"; then
     echo "==> Identity '$NAME' already exists — nothing to do."
@@ -84,7 +97,7 @@ openssl pkcs12 -export \
 echo "==> Importing into the login keychain"
 # -T grants codesign access to the private key without prompting on every build.
 if ! security import "$WORKDIR/identity.p12" \
-        -k "$HOME/Library/Keychains/login.keychain-db" \
+        -k "$KEYCHAIN" \
         -P "$P12_PASSWORD" \
         -T /usr/bin/codesign \
         -T /usr/bin/security; then
@@ -111,13 +124,13 @@ echo "==> Adding code-signing trust (macOS will ask for your login password)"
 security add-trusted-cert \
     -r trustRoot \
     -p codeSign \
-    -k "$HOME/Library/Keychains/login.keychain-db" \
+    -k "$KEYCHAIN" \
     "$WORKDIR/cert.pem"
 
 # Stop the keychain prompting for permission on each codesign invocation.
 security set-key-partition-list \
     -S apple-tool:,apple:,codesign: \
-    -s -k "" "$HOME/Library/Keychains/login.keychain-db" >/dev/null 2>&1 || \
+    -s -k "" "$KEYCHAIN" >/dev/null 2>&1 || \
     echo "    (partition list not updated; you may see a keychain prompt on first sign)"
 
 echo
