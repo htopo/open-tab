@@ -1,22 +1,26 @@
 import AppKit
 import OpenTabAX
 import OpenTabCore
+import OpenTabInput
 import OpenTabShot
+import OpenTabUI
 
 /// Owns application lifetime and wires the subsystems together.
 ///
-/// Deliberately thin: it constructs collaborators and forwards lifecycle events.
-/// Anything with real behaviour lives in a library target so it can be tested
-/// without a running application.
+/// Deliberately thin: it constructs collaborators, forwards lifecycle events, and
+/// fans settings changes out to whoever cares. Anything with real behaviour lives
+/// in a library target so it can be tested without a running application.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var menuBarController: MenuBarController?
     private var onboarding: OnboardingWindowController?
+    private var settingsWindow: SettingsWindowController?
     private var permissions: PermissionsMonitor?
     private var registry: WindowRegistry?
     private var switcher: SwitcherController?
     private var capture: CaptureCoordinator?
+    private var store: SettingsStore?
 
     /// Tracks focus transitions so the outgoing window can be photographed before
     /// it stops being capturable.
@@ -25,6 +29,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// True once the switcher subsystems have been started. Guards against
     /// starting them twice when a permission flickers.
     private var isRunning = false
+    private var hasShutDown = false
+    private var signalSources: [DispatchSourceSignal] = []
 
     // MARK: - Lifecycle
 
@@ -35,15 +41,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         installSignalHandlers()
 
+        let store = SettingsStore()
+        self.store = store
+        store.onChange = { [weak self] old, new in
+            self?.settingsChanged(from: old, to: new)
+        }
+
+        LoginItem.setEnabled(store.settings.general.startAtLogin)
+
         menuBarController = MenuBarController(
+            variant: store.settings.general.menuBarIconVariant,
             onOpenSettings: { [weak self] in self?.showSettings() },
             onLogWindowList: { [weak self] in self?.logWindowList() },
             onQuit: { [weak self] in self?.quit() }
         )
+        applyMenuBarVisibility(store.settings.general)
 
         let permissions = PermissionsMonitor(screenRecordingProbe: { ScreenRecordingPermission.isGranted })
         self.permissions = permissions
-
         permissions.onChange = { [weak self] old, new in
             self?.permissionsChanged(from: old, to: new)
         }
@@ -80,6 +95,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showSettings()
         }
         return true
+    }
+
+    // MARK: - Settings changes
+
+    /// Fans a settings change out to the subsystems that care.
+    ///
+    /// Each is compared individually so that dragging one slider does not, for
+    /// example, tear down and rebuild the event tap.
+    private func settingsChanged(from old: Settings, to new: Settings) {
+        if old.shortcuts != new.shortcuts {
+            switcher?.updateShortcuts(new.shortcuts)
+        }
+        if old.interaction != new.interaction {
+            switcher?.updateInteraction(new.interaction)
+        }
+        if old.appearance != new.appearance {
+            switcher?.updateAppearance(new.appearance)
+        }
+        if old.actionShortcuts != new.actionShortcuts {
+            switcher?.updateActionShortcuts(new.actionShortcuts)
+        }
+        if old.exceptions != new.exceptions {
+            switcher?.updateExceptions(new.exceptions)
+        }
+        if old.general.captureWindowsInBackground != new.general.captureWindowsInBackground {
+            capture?.isBackgroundCaptureEnabled = new.general.captureWindowsInBackground
+        }
+        if old.general.startAtLogin != new.general.startAtLogin {
+            LoginItem.setEnabled(new.general.startAtLogin)
+        }
+        if old.general.showMenuBarIcon != new.general.showMenuBarIcon
+            || old.general.menuBarIconVariant != new.general.menuBarIconVariant {
+            menuBarController?.setVariant(new.general.menuBarIconVariant)
+            applyMenuBarVisibility(new.general)
+        }
+    }
+
+    private func applyMenuBarVisibility(_ general: GeneralSettings) {
+        general.showMenuBarIcon ? menuBarController?.show() : menuBarController?.hide()
     }
 
     // MARK: - Permission-driven startup
@@ -120,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Brings up everything that needs Accessibility. Idempotent.
     private func startSwitcher() {
         guard !isRunning else { return }
-        guard permissions?.accessibility == true else { return }
+        guard permissions?.accessibility == true, let store else { return }
         isRunning = true
 
         Log.app.notice("Accessibility available — starting switcher subsystems")
@@ -128,32 +182,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let registry = WindowRegistry()
         self.registry = registry
 
-        let capture = CaptureCoordinator()
+        let capture = CaptureCoordinator(
+            isBackgroundCaptureEnabled: store.settings.general.captureWindowsInBackground
+        )
         self.capture = capture
         capture.start()
 
         // Keep the capture layer's idea of what exists in step with the registry,
         // and take a last photograph of any window that is about to become
         // uncapturable. By the time a window reports itself minimized, macOS has
-        // already stopped compositing it and there is nothing left to capture —
-        // losing focus is the last reliable moment.
+        // already stopped compositing it — losing focus is the last reliable moment.
         registry.onChange = { [weak self] in
             guard let self, let registry = self.registry else { return }
             capture.updateTrackedWindows(registry.windows)
 
             let scale = NSScreen.main?.backingScaleFactor ?? 2.0
-            for window in registry.windows where window.isFocused {
-                if let previous = self.previouslyFocusedWindow, previous != window.id,
+            if let focused = registry.windows.first(where: \.isFocused) {
+                if let previous = self.previouslyFocusedWindow, previous != focused.id,
                    let losing = registry.windows.first(where: { $0.id == previous }) {
                     capture.captureBeforeItBecomesUnavailable(losing, scale: scale)
                 }
-                self.previouslyFocusedWindow = window.id
+                self.previouslyFocusedWindow = focused.id
             }
         }
 
         registry.start()
 
-        let switcher = SwitcherController(registry: registry, capture: capture)
+        let switcher = SwitcherController(
+            registry: registry,
+            capture: capture,
+            shortcuts: store.settings.shortcuts,
+            interaction: store.settings.interaction,
+            appearance: store.settings.appearance,
+            actionShortcuts: store.settings.actionShortcuts,
+            exceptions: store.settings.exceptions
+        )
         self.switcher = switcher
         switcher.start()
     }
@@ -174,11 +237,103 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         registry = nil
     }
 
-    // MARK: - Actions
+    // MARK: - Settings window
 
     private func showSettings() {
-        // Phase 7 replaces this with the real settings window.
-        Log.app.notice("Settings requested")
+        guard let store else { return }
+
+        if settingsWindow == nil {
+            settingsWindow = SettingsWindowController(store: store) { [weak self] in
+                self?.makeSettingsEnvironment() ?? Self.fallbackEnvironment
+            }
+        }
+        settingsWindow?.show()
+    }
+
+    private func makeSettingsEnvironment() -> SettingsEnvironment {
+        SettingsEnvironment(
+            screenRecordingGranted: permissions?.screenRecording ?? false,
+            displayNames: NSScreen.screens.map(\.localizedName),
+            availableLanguages: Self.shippedLanguages,
+            symbolicHotkeysSupported: PrivateSymbols.canControlSymbolicHotKeys,
+            onGrantScreenRecording: { [weak self] in
+                ScreenRecordingPermission.request()
+                self?.permissions?.openSettings(for: .screenRecording)
+            },
+            onRestoreSystemShortcuts: { [weak self] in
+                self?.switcher?.restoreSystemShortcuts()
+            },
+            onCheckForUpdates: { [weak self] in
+                self?.checkForUpdates()
+            },
+            onExportSettings: { [weak self] in
+                self?.settingsWindow?.exportSettings()
+            },
+            onImportSettings: { [weak self] in
+                self?.settingsWindow?.importSettings()
+            },
+            onResetSettings: { [weak self] in
+                self?.resetSettingsAndRestart()
+            },
+            onQuit: { [weak self] in
+                self?.quit()
+            }
+        )
+    }
+
+    /// Used only if the delegate has gone away while the window is still up.
+    private static let fallbackEnvironment = SettingsEnvironment(
+        screenRecordingGranted: false,
+        displayNames: [],
+        availableLanguages: [],
+        symbolicHotkeysSupported: false,
+        onGrantScreenRecording: {},
+        onRestoreSystemShortcuts: {},
+        onCheckForUpdates: {},
+        onExportSettings: {},
+        onImportSettings: {},
+        onResetSettings: {},
+        onQuit: { NSApplication.shared.terminate(nil) }
+    )
+
+    /// Localizations shipped in this build.
+    ///
+    /// Only English so far. The picker and the plumbing exist so that adding a
+    /// localization is a resource change rather than a code change.
+    private static let shippedLanguages: [(code: String, name: String)] = [
+        ("en", "English"),
+    ]
+
+    // MARK: - Actions
+
+    private func checkForUpdates() {
+        // Phase 12 wires this to Sparkle's updater.
+        Log.updates.notice("Manual update check requested")
+    }
+
+    private func resetSettingsAndRestart() {
+        store?.resetToDefaults()
+
+        // Restore the system's shortcuts before relaunching, so the new process
+        // starts from a clean slate rather than inheriting a claim it does not
+        // know about.
+        switcher?.stop()
+
+        guard AppInfo.isBundled else {
+            Log.app.notice("Reset complete; relaunch skipped (not running from a bundle)")
+            NSApplication.shared.terminate(nil)
+            return
+        }
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, _ in
+            Task { @MainActor in NSApplication.shared.terminate(nil) }
+        }
+    }
+
+    private func quit() {
+        NSApplication.shared.terminate(nil)
     }
 
     /// Dumps what the registry currently believes is open, and how long reading it
@@ -230,10 +385,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func quit() {
-        NSApplication.shared.terminate(nil)
-    }
-
     // MARK: - Shutdown
 
     /// Everything that must happen before the process goes away, in an order that
@@ -250,11 +401,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switcher?.stop()
         switcher = nil
 
+        capture?.stop()
+        capture = nil
+
         registry?.stop()
         permissions?.stop()
-    }
 
-    private var hasShutDown = false
+        // Write any change made in the last half-second before the debounce fires.
+        store?.flush()
+    }
 
     /// AppKit does not deliver `applicationWillTerminate` for SIGINT/SIGTERM, and
     /// those are exactly the paths a developer hits with Ctrl-C or `killall`. A
@@ -275,6 +430,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             signalSources.append(source)
         }
     }
-
-    private var signalSources: [DispatchSourceSignal] = []
 }

@@ -5,7 +5,7 @@ import Foundation
 /// A specific display is stored by *name* rather than by `CGDirectDisplayID`,
 /// because display IDs are reassigned across reboots and re-plugs. A name survives
 /// both, and falls back gracefully when that display is gone.
-public enum ScreenPlacement: Codable, Equatable, Sendable {
+public enum ScreenPlacement: Codable, Hashable, Sendable {
     case activeScreen
     case screenWithMouse
     case screenWithFocusedWindow
@@ -47,6 +47,15 @@ public struct AnimationSettings: Codable, Equatable, Sendable {
         self.fadeOutDuration = fadeOutDuration
         self.animateSelectionMove = animateSelectionMove
         self.reduceAnimations = reduceAnimations
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = AnimationSettings()
+        fadeInDuration = c.value(.fadeInDuration, d.fadeInDuration)
+        fadeOutDuration = c.value(.fadeOutDuration, d.fadeOutDuration)
+        animateSelectionMove = c.value(.animateSelectionMove, d.animateSelectionMove)
+        reduceAnimations = c.value(.reduceAnimations, d.reduceAnimations)
     }
 
     public static let `default` = AnimationSettings()
@@ -106,6 +115,22 @@ public struct AdvancedAppearanceSettings: Codable, Equatable, Sendable {
         self.highlightStyle = highlightStyle
     }
 
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = AdvancedAppearanceSettings()
+        maxRows = c.value(.maxRows, d.maxRows)
+        maxColumns = c.value(.maxColumns, d.maxColumns)
+        panelOpacity = c.value(.panelOpacity, d.panelOpacity)
+        cornerRadius = c.value(.cornerRadius, d.cornerRadius)
+        cellPadding = c.value(.cellPadding, d.cellPadding)
+        titleFontSize = c.value(.titleFontSize, d.titleFontSize)
+        showAppIconBadge = c.value(.showAppIconBadge, d.showAppIconBadge)
+        showWindowCountBadge = c.value(.showWindowCountBadge, d.showWindowCountBadge)
+        showStatusBadges = c.value(.showStatusBadges, d.showStatusBadges)
+        showWindowTitle = c.value(.showWindowTitle, d.showWindowTitle)
+        highlightStyle = c.value(.highlightStyle, d.highlightStyle)
+    }
+
     public static let `default` = AdvancedAppearanceSettings()
 }
 
@@ -142,6 +167,19 @@ public struct AppearanceSettings: Codable, Equatable, Sendable {
         self.screenPlacement = screenPlacement
         self.animations = animations
         self.advanced = advanced
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = AppearanceSettings()
+        style = c.value(.style, d.style)
+        size = c.value(.size, d.size)
+        theme = c.value(.theme, d.theme)
+        afterRelease = c.value(.afterRelease, d.afterRelease)
+        previewSelectedWindow = c.value(.previewSelectedWindow, d.previewSelectedWindow)
+        screenPlacement = c.value(.screenPlacement, d.screenPlacement)
+        animations = c.value(.animations, d.animations)
+        advanced = c.value(.advanced, d.advanced)
     }
 
     public static let `default` = AppearanceSettings()

@@ -56,5 +56,16 @@ public struct InteractionSettings: Codable, Equatable, Sendable {
 
     public var holdThreshold: TimeInterval { Double(holdThresholdMS) / 1000 }
 
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = InteractionSettings()
+        holdThresholdMS = c.value(.holdThresholdMS, d.holdThresholdMS)
+        mouseHoverSelects = c.value(.mouseHoverSelects, d.mouseHoverSelects)
+        clickOutsideDismisses = c.value(.clickOutsideDismisses, d.clickOutsideDismisses)
+        scrollNavigates = c.value(.scrollNavigates, d.scrollNavigates)
+        escapeCancels = c.value(.escapeCancels, d.escapeCancels)
+        wrapAround = c.value(.wrapAround, d.wrapAround)
+    }
+
     public static let `default` = InteractionSettings()
 }

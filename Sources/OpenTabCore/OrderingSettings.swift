@@ -47,5 +47,13 @@ public struct OrderingSettings: Codable, Equatable, Sendable {
         self.activeWindowFirst = activeWindowFirst
     }
 
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = OrderingSettings()
+        ordering = c.value(.ordering, d.ordering)
+        groupByApplication = c.value(.groupByApplication, d.groupByApplication)
+        activeWindowFirst = c.value(.activeWindowFirst, d.activeWindowFirst)
+    }
+
     public static let `default` = OrderingSettings()
 }

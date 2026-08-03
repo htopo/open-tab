@@ -32,6 +32,13 @@ final class SwitcherController {
     private var afterRelease: AfterReleaseBehavior
     private var appearance: AppearanceSettings
     private var actionShortcuts: ActionShortcuts
+    private var exceptions: [ExceptionRule]
+
+    /// Watches which application is frontmost so the tap knows, synchronously,
+    /// whether to pass everything through. Computing this inside the tap callback
+    /// would mean querying `NSWorkspace` on the tap thread, which is exactly the
+    /// kind of work that gets a tap disabled for overrunning.
+    private var activationObserver: (any NSObjectProtocol)?
 
     /// The appearance in force for the current interaction, after the active
     /// shortcut's overrides have been merged in.
@@ -56,6 +63,7 @@ final class SwitcherController {
          interaction: InteractionSettings = .default,
          appearance: AppearanceSettings = .default,
          actionShortcuts: ActionShortcuts = .default,
+         exceptions: [ExceptionRule] = ExceptionRule.shippedDefaults,
          symbolicHotkeys: SymbolicHotkeyManager = SymbolicHotkeyManager()) {
         self.registry = registry
         self.capture = capture
@@ -63,6 +71,7 @@ final class SwitcherController {
         self.interaction = interaction
         self.appearance = appearance
         self.actionShortcuts = actionShortcuts
+        self.exceptions = exceptions
         self.afterRelease = appearance.afterRelease
         self.symbolicHotkeys = symbolicHotkeys
         self.machine = HotkeyStateMachine(interaction: interaction,
@@ -98,6 +107,7 @@ final class SwitcherController {
         self.tap = tap
 
         guard tap.install() else { return }
+        observeFrontmostApplication()
         applyConfiguration()
     }
 
@@ -107,6 +117,11 @@ final class SwitcherController {
         panel.hide()
         tap?.uninstall()
         tap = nil
+
+        if let activationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(activationObserver)
+            self.activationObserver = nil
+        }
 
         // The single most important thing this app does on the way out.
         symbolicHotkeys.restoreAll()
@@ -145,6 +160,53 @@ final class SwitcherController {
     func updateActionShortcuts(_ newShortcuts: ActionShortcuts) {
         actionShortcuts = newShortcuts
         applyConfiguration()
+    }
+
+    func updateExceptions(_ newExceptions: [ExceptionRule]) {
+        exceptions = newExceptions
+        updatePassThroughState()
+    }
+
+    // MARK: - Exceptions
+
+    /// Recomputes whether the tap should pass everything through, and caches the
+    /// answer where the tap callback can read it without doing any work.
+    private func observeFrontmostApplication() {
+        updatePassThroughState()
+
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updatePassThroughState() }
+        }
+    }
+
+    private func updatePassThroughState() {
+        let shouldPassThrough = ExceptionEngine.shouldIgnoreShortcuts(
+            rules: exceptions,
+            context: exceptionContext()
+        )
+
+        tap?.updateConfiguration { config in
+            config.passThroughEverything = shouldPassThrough
+        }
+
+        if shouldPassThrough {
+            Log.input.debug(
+                "Passing shortcuts through to \(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?", privacy: .public)"
+            )
+        }
+    }
+
+    private func exceptionContext() -> ExceptionEngine.Context {
+        ExceptionEngine.Context(
+            frontmostBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+            fullscreenBundleIDs: Set(
+                registry.windows.filter(\.isFullscreen).map(\.appBundleID)
+            )
+        )
     }
 
     func updateAppearance(_ newAppearance: AppearanceSettings) {
@@ -348,8 +410,16 @@ final class SwitcherController {
         let started = DispatchTime.now()
         let snapshot = registry.snapshot()
 
+        // Exception rules run before the shortcut's own filters. A window hidden
+        // by a per-app rule should not be resurrected by a permissive filter.
+        let permitted = ExceptionEngine.filter(
+            snapshot.windows,
+            rules: exceptions,
+            context: exceptionContext()
+        )
+
         unfilteredList = WindowListBuilder.build(
-            windows: snapshot.windows,
+            windows: permitted,
             apps: snapshot.apps,
             filter: shortcut.filter,
             ordering: shortcut.ordering,

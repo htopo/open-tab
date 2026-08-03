@@ -96,6 +96,18 @@ public struct FilterSettings: Codable, Equatable, Sendable {
         self.appsWithNoWindows = appsWithNoWindows
     }
 
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = FilterSettings()
+        apps = c.value(.apps, d.apps)
+        spaces = c.value(.spaces, d.spaces)
+        screens = c.value(.screens, d.screens)
+        minimized = c.value(.minimized, d.minimized)
+        hidden = c.value(.hidden, d.hidden)
+        fullscreen = c.value(.fullscreen, d.fullscreen)
+        appsWithNoWindows = c.value(.appsWithNoWindows, d.appsWithNoWindows)
+    }
+
     public static let `default` = FilterSettings()
 }
 
