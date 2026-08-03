@@ -48,10 +48,21 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>MIT licensed. Copyright (c) 2026 OpenTab contributors.</string>
 
-	<!-- Sparkle appcast. Populated in the release phase; harmless when absent. -->
+	<!-- Sparkle. The appcast is signed with an EdDSA key pair independent of
+	     Apple code signing, which is what makes in-app updates workable for an
+	     app that is not notarized.
+
+	     SUPublicEDKey must be filled in with the public half of the key pair
+	     before the first release; see Packaging/README.md. Until then Sparkle
+	     refuses every update rather than accepting an unsigned one, which is the
+	     correct failure. -->
 	<key>SUFeedURL</key>
 	<string>https://htopo.github.io/open-tab/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string></string>
 	<key>SUEnableInstallerLauncherService</key>
 	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
 </dict>
 </plist>

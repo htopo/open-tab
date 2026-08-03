@@ -112,12 +112,14 @@ open dist/OpenTab.app
 Other targets:
 
 ```sh
-swift test                   # unit tests; no permissions required
-Scripts/bundle.sh --debug    # faster iteration builds
-Scripts/bundle.sh --universal# arm64 + x86_64
-Scripts/dmg.sh               # → dist/OpenTab-<version>.dmg
-Scripts/make-icon.swift      # regenerate the app icon from source
+swift test                    # unit tests; no permissions required
+Scripts/bundle.sh --debug     # faster iteration builds
+Scripts/bundle.sh --universal # arm64 + x86_64
+Scripts/dmg.sh                # → dist/OpenTab-<version>.dmg
+swift Scripts/make-icon.swift # regenerate the app icon from source
 ```
+
+Releases are documented in [Packaging/README.md](Packaging/README.md).
 
 Layout:
 
@@ -129,6 +131,9 @@ Layout:
 | `OpenTabInput` | Event tap, hotkey state machine, symbolic-hotkey ownership |
 | `OpenTabUI` | SwiftUI overlay, settings, and onboarding views |
 | `OpenTab` | App delegate, menu-bar item, overlay panel host, wiring |
+
+The only third-party dependency is [Sparkle](https://sparkle-project.org), for
+in-app updates. Everything else is Apple frameworks.
 
 ## Something went wrong
 

@@ -23,6 +23,11 @@ let package = Package(
         .executable(name: "OpenTab", targets: ["OpenTab"]),
         .library(name: "OpenTabCore", targets: ["OpenTabCore"]),
     ],
+    dependencies: [
+        // Sparkle's appcast signing uses its own EdDSA key pair, independent of
+        // Apple code signing, so it works for an app that is not notarized.
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
+    ],
     targets: [
         // Typed wrappers over AXUIElement, AX observers, and dlsym-resolved access to
         // the undocumented CoreGraphics symbols. No app logic lives here.
@@ -51,7 +56,10 @@ let package = Package(
         // AppDelegate, menu-bar item, NSPanel overlay host, wiring, lifecycle.
         .executableTarget(
             name: "OpenTab",
-            dependencies: ["OpenTabCore", "OpenTabAX", "OpenTabShot", "OpenTabInput", "OpenTabUI"]
+            dependencies: [
+                "OpenTabCore", "OpenTabAX", "OpenTabShot", "OpenTabInput", "OpenTabUI",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ]
         ),
 
         .testTarget(

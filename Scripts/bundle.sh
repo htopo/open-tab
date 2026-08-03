@@ -82,6 +82,24 @@ else
 fi
 chmod +x "$CONTENTS/MacOS/OpenTab"
 
+# Sparkle ships as a framework containing XPC services and helper apps, so it has
+# to live inside the bundle rather than being statically linked. SwiftPM links it
+# with an rpath pointing at the build directory, which does not exist on a user's
+# machine, so the bundle-relative one is added here.
+SPARKLE_SOURCE=""
+for candidate in "$BIN_PATH/Sparkle.framework" "$BIN_PATH/../Sparkle.framework"; do
+    if [[ -d "$candidate" ]]; then SPARKLE_SOURCE="$candidate"; break; fi
+done
+
+if [[ -n "$SPARKLE_SOURCE" ]]; then
+    echo "==> Embedding Sparkle.framework"
+    mkdir -p "$CONTENTS/Frameworks"
+    cp -R "$SPARKLE_SOURCE" "$CONTENTS/Frameworks/"
+    install_name_tool -add_rpath "@executable_path/../Frameworks" "$CONTENTS/MacOS/OpenTab" 2>/dev/null || true
+else
+    echo "    warning: Sparkle.framework not found; in-app updates will be unavailable" >&2
+fi
+
 # Icon. Generated from our own source artwork by Scripts/make-icon.swift.
 if [[ ! -f "$ROOT/Resources/Assets/OpenTab.icns" ]]; then
     echo "==> Icon missing; generating"

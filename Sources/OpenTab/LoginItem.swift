@@ -11,8 +11,23 @@ import ServiceManagement
 enum LoginItem {
 
     static var isEnabled: Bool {
-        guard AppInfo.isBundled else { return false }
+        guard isRegisterable else { return false }
         return SMAppService.mainApp.status == .enabled
+    }
+
+    /// Whether this build should be allowed to register itself.
+    ///
+    /// A build running out of `dist/` or `.build/` is a development build. macOS
+    /// records the *path* of a login item, so registering one would leave a stale
+    /// entry pointing into a build tree that gets deleted on the next clean — and
+    /// the user would have to hunt through System Settings to find out why macOS
+    /// complains about a missing login item every morning.
+    static var isRegisterable: Bool {
+        guard AppInfo.isBundled else { return false }
+
+        let path = Bundle.main.bundleURL.path
+        let developmentMarkers = ["/dist/", "/.build/", "/DerivedData/"]
+        return !developmentMarkers.contains { path.contains($0) }
     }
 
     /// Brings registration in line with the setting.
@@ -21,8 +36,8 @@ enum LoginItem {
     /// request in System Settings, which is their prerogative and not a failure
     /// worth an alert.
     static func setEnabled(_ enabled: Bool) {
-        guard AppInfo.isBundled else {
-            Log.app.debug("Login item ignored: not running from an app bundle")
+        guard isRegisterable else {
+            Log.app.debug("Login item ignored: development build or not bundled")
             return
         }
 
@@ -49,7 +64,19 @@ enum LoginItem {
     /// worth telling the user about because the app will not actually start at
     /// login until they approve it.
     static var requiresApproval: Bool {
-        guard AppInfo.isBundled else { return false }
+        guard isRegisterable else { return false }
         return SMAppService.mainApp.status == .requiresApproval
+    }
+
+    /// Removes a registration left behind by an earlier build.
+    ///
+    /// Called at launch by development builds, which never register but may have
+    /// done so before this guard existed.
+    static func unregisterStaleDevelopmentEntry() {
+        guard AppInfo.isBundled, !isRegisterable else { return }
+        guard SMAppService.mainApp.status == .enabled else { return }
+
+        try? SMAppService.mainApp.unregister()
+        Log.app.notice("Removed a login item registered by a development build")
     }
 }

@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var switcher: SwitcherController?
     private var capture: CaptureCoordinator?
     private var store: SettingsStore?
+    private var updater: UpdateController?
 
     /// Tracks focus transitions so the outgoing window can be photographed before
     /// it stops being capturable.
@@ -47,7 +48,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.settingsChanged(from: old, to: new)
         }
 
+        LoginItem.unregisterStaleDevelopmentEntry()
         LoginItem.setEnabled(store.settings.general.startAtLogin)
+        updater = UpdateController(policy: store.settings.general.updatePolicy)
 
         menuBarController = MenuBarController(
             variant: store.settings.general.menuBarIconVariant,
@@ -132,6 +135,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             || old.general.menuBarIconVariant != new.general.menuBarIconVariant {
             menuBarController?.setVariant(new.general.menuBarIconVariant)
             applyMenuBarVisibility(new.general)
+        }
+        if old.general.updatePolicy != new.general.updatePolicy {
+            if updater?.isAvailable == true {
+                updater?.apply(policy: new.general.updatePolicy)
+            } else if new.general.updatePolicy != .never {
+                // Switching away from "never" starts the updater that was
+                // deliberately not created at launch.
+                updater = UpdateController(policy: new.general.updatePolicy)
+            }
         }
         if old.general.languageCode != new.general.languageCode {
             // macOS resolves an app's language at launch, so this takes effect on
@@ -326,8 +338,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Actions
 
     private func checkForUpdates() {
-        // Phase 12 wires this to Sparkle's updater.
         Log.updates.notice("Manual update check requested")
+        updater?.checkForUpdates()
     }
 
     private func resetSettingsAndRestart() {

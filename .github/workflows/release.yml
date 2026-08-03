@@ -1,0 +1,235 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, sign, and publish
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          # The tag and the VERSION file must agree, or the DMG filename, the
+          # appcast entry, and the cask would all disagree about what shipped.
+          if [[ "$TAG" != "v$VERSION" ]]; then
+            echo "::error::Tag $TAG does not match VERSION file ($VERSION)"
+            exit 1
+          fi
+
+      - name: Import signing certificate
+        env:
+          SIGNING_CERT_P12: ${{ secrets.SIGNING_CERT_P12 }}
+          SIGNING_CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+        run: |
+          if [[ -z "$SIGNING_CERT_P12" ]]; then
+            echo "::warning::No signing certificate configured — the release will be ad-hoc signed."
+            echo "::warning::Users will have to re-grant Accessibility after every update."
+            exit 0
+          fi
+
+          # A throwaway keychain, so nothing is left behind on the runner and the
+          # certificate never touches the default keychain.
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+
+          echo "$SIGNING_CERT_P12" | base64 --decode > /tmp/signing.p12
+          security import /tmp/signing.p12 -k build.keychain \
+            -P "$SIGNING_CERT_PASSWORD" -T /usr/bin/codesign
+          rm -f /tmp/signing.p12
+
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain >/dev/null
+
+          security find-identity -v -p codesigning
+
+      - name: Build universal app
+        run: Scripts/bundle.sh --universal
+
+      - name: Verify the build
+        run: |
+          APP=dist/OpenTab.app
+          lipo -archs "$APP/Contents/MacOS/OpenTab" | tee /tmp/archs
+          grep -q arm64 /tmp/archs
+          grep -q x86_64 /tmp/archs
+          test -d "$APP/Contents/Frameworks/Sparkle.framework"
+          codesign --verify --deep --strict "$APP"
+
+      - name: Build DMG
+        run: Scripts/dmg.sh
+
+      - name: Sign the appcast entry
+        id: appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          DMG="dist/OpenTab-$VERSION.dmg"
+
+          if [[ -z "$SPARKLE_PRIVATE_KEY" ]]; then
+            echo "::warning::No SPARKLE_PRIVATE_KEY — publishing without an appcast signature."
+            echo "::warning::In-app updates will refuse this release."
+            echo "signature=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # sign_update ships inside Sparkle's SwiftPM artifact bundle.
+          SIGN_TOOL="$(find .build/artifacts -name sign_update -type f | head -n1)"
+          if [[ -z "$SIGN_TOOL" ]]; then
+            echo "::error::sign_update not found in the Sparkle artifact bundle"
+            exit 1
+          fi
+
+          echo "$SPARKLE_PRIVATE_KEY" > /tmp/sparkle_key
+          SIGNATURE="$("$SIGN_TOOL" "$DMG" --ed-key-file /tmp/sparkle_key)"
+          rm -f /tmp/sparkle_key
+
+          echo "signature=$SIGNATURE" >> "$GITHUB_OUTPUT"
+          echo "Signed: $SIGNATURE"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+          SHA="$(cat "dist/OpenTab-$VERSION.dmg.sha256")"
+
+          cat > /tmp/notes.md <<NOTES
+          ## OpenTab $VERSION
+
+          \`\`\`sh
+          brew install --cask htopo/tap/open-tab
+          \`\`\`
+
+          Or download the DMG below.
+
+          **OpenTab is signed but not notarized**, because notarization requires a
+          paid Apple Developer ID. Installing through the Homebrew tap handles this
+          for you. If you download the DMG directly, right-click the app and choose
+          **Open** the first time, or run:
+
+          \`\`\`sh
+          xattr -dr com.apple.quarantine /Applications/OpenTab.app
+          \`\`\`
+
+          Requires macOS 14 (Sonoma) or later. Universal (Apple Silicon and Intel).
+
+          \`sha256: $SHA\`
+          NOTES
+
+          gh release create "$TAG" \
+            --title "OpenTab $VERSION" \
+            --notes-file /tmp/notes.md \
+            "dist/OpenTab-$VERSION.dmg" \
+            "dist/OpenTab-$VERSION.dmg.sha256"
+
+      - name: Update appcast
+        if: steps.appcast.outputs.signature != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+          DMG="dist/OpenTab-$VERSION.dmg"
+          LENGTH="$(stat -f%z "$DMG")"
+          BUILD="$(git rev-list --count HEAD)"
+          PUBDATE="$(date -u '+%a, %d %b %Y %H:%M:%S +0000')"
+
+          git fetch origin gh-pages 2>/dev/null && git checkout gh-pages || git checkout --orphan gh-pages
+          git rm -rf --cached . >/dev/null 2>&1 || true
+
+          # Rebuild the appcast from scratch each time. It only ever needs the
+          # newest release: Sparkle compares against the running version, and
+          # keeping history here would be a second source of truth about what
+          # shipped, alongside the GitHub releases that already record it.
+          cat > appcast.xml <<XML
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+            <channel>
+              <title>OpenTab</title>
+              <link>https://htopo.github.io/open-tab/appcast.xml</link>
+              <description>Updates for OpenTab</description>
+              <language>en</language>
+              <item>
+                <title>Version $VERSION</title>
+                <link>https://github.com/htopo/open-tab/releases/tag/$TAG</link>
+                <sparkle:version>$BUILD</sparkle:version>
+                <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+                <pubDate>$PUBDATE</pubDate>
+                <enclosure
+                  url="https://github.com/htopo/open-tab/releases/download/$TAG/OpenTab-$VERSION.dmg"
+                  length="$LENGTH"
+                  type="application/octet-stream"
+                  sparkle:edSignature="${{ steps.appcast.outputs.signature }}" />
+              </item>
+            </channel>
+          </rss>
+          XML
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+          git commit -m "Appcast for $VERSION"
+          git push origin gh-pages --force
+
+      - name: Open a cask bump against the tap
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.TAP_TOKEN || github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          SHA="$(cat "dist/OpenTab-$VERSION.dmg.sha256")"
+
+          if [[ -z "${{ secrets.TAP_TOKEN }}" ]]; then
+            echo "::warning::No TAP_TOKEN secret; skipping the tap bump."
+            echo "::warning::Update Casks/open-tab.rb by hand: version $VERSION, sha256 $SHA"
+            exit 0
+          fi
+
+          git clone "https://x-access-token:$GH_TOKEN@github.com/htopo/homebrew-tap.git" /tmp/tap
+          cd /tmp/tap
+
+          BRANCH="bump-open-tab-$VERSION"
+          git checkout -b "$BRANCH"
+
+          sed -i '' -e "s/^  version .*/  version \"$VERSION\"/" \
+                    -e "s/^  sha256 .*/  sha256 \"$SHA\"/" Casks/open-tab.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "open-tab $VERSION"
+          git push origin "$BRANCH"
+
+          gh pr create --repo htopo/homebrew-tap \
+            --title "open-tab $VERSION" \
+            --body "Automated bump from the OpenTab release workflow."
+
+      - name: Clean up the keychain
+        if: always()
+        run: security delete-keychain build.keychain 2>/dev/null || true
