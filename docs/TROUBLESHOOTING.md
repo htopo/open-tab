@@ -6,6 +6,7 @@
 - [The switcher does not appear](#the-switcher-does-not-appear)
 - [Thumbnails are blank or stale](#thumbnails-are-blank-or-stale)
 - [⌘Tab reaches OpenTab instead of my VM](#command-tab-reaches-opentab-instead-of-my-vm)
+- [Updates are not being offered](#updates-are-not-being-offered)
 - [Creating the signing certificate](#creating-the-signing-certificate)
 
 ---
@@ -180,6 +181,32 @@ mdls -name kMDItemCFBundleIdentifier /Applications/Some\ App.app
 
 ---
 
+## Updates are not being offered
+
+- **Updates policy is "Never check"** — Settings → General. When set to Never,
+  OpenTab does not start its updater at all, so nothing runs in the background.
+- **Running from a development build** — in-app updates only work from an
+  installed `.app`. A `swift run` build has no updater.
+- **Installed via Homebrew** — let Homebrew handle it instead:
+
+  ```sh
+  brew upgrade --cask open-tab
+  ```
+
+- **"Update is improperly signed"** — the release was published without a valid
+  appcast signature. OpenTab refuses it rather than installing something it
+  cannot verify, which is the correct behaviour. Download the DMG from
+  [Releases](https://github.com/htopo/open-tab/releases) instead and report it.
+
+To see what the updater is doing:
+
+```sh
+log show --predicate 'subsystem == "io.github.htopo.opentab"' --last 1h \
+    | grep updates
+```
+
+---
+
 ## Creating the signing certificate
 
 Needed only when **building from source**. Run once per machine:
@@ -207,6 +234,11 @@ codesign --display --verbose=2 dist/OpenTab.app
 
 `Signature=adhoc` means permissions will reset on every rebuild; anything else
 means they will persist.
+
+Building from source also skips login-item registration: macOS records a login
+item's *path*, and a build running out of `dist/` would leave an entry pointing
+into a directory that disappears on the next clean build. Installed copies
+register normally.
 
 ### For CI
 

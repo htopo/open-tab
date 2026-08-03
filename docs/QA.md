@@ -143,6 +143,28 @@ Displays:        ____________________
 - [ ] Nine shortcuts can be configured independently, and each applies its own
       filtering, appearance, and ordering.
 
+## Updates
+
+- [ ] **Check for Updates Now…** reaches the appcast and reports either an update
+      or "you're up to date". Sparkle's window comes to the front rather than
+      opening behind other apps.
+- [ ] After that window closes, OpenTab returns to having **no Dock icon**.
+- [ ] Setting **Updates policy → Never** and relaunching starts no updater
+      (`log show … | grep updates` shows the "not started" line).
+- [ ] An appcast entry with a **bad signature is refused**, not installed.
+- [ ] Installing an update **does not reset Accessibility** — this is the whole
+      point of the stable signing certificate.
+
+## Gesture (opt-in)
+
+- [ ] Ships **disabled**; a trackpad swipe does nothing until it is turned on.
+- [ ] Once enabled, a deliberate three-finger horizontal swipe opens the switcher.
+- [ ] Continuing the swipe moves the selection one entry at a time rather than
+      flying through the list.
+- [ ] A short or vertical swipe does **not** trigger it, and still reaches
+      whatever app it was aimed at (Mission Control, browser back, page scroll).
+- [ ] A mouse wheel never triggers it.
+
 ## Packaging
 
 - [ ] `Scripts/bundle.sh --universal` produces a binary containing both `arm64`
