@@ -563,7 +563,8 @@ final class SwitcherController {
                 if case .searching = machine.state { return true }
                 return false
             }(),
-            thumbnails: thumbnails
+            thumbnails: thumbnails,
+            windowCounts: windowCountsByApplication()
         )
 
         panel.setContent(
@@ -581,6 +582,20 @@ final class SwitcherController {
         if panel.isVisible {
             panel.resizeToFit(on: targetScreen())
         }
+    }
+
+    /// How many windows each application contributes to the current list.
+    ///
+    /// Counted over the *visible* list rather than the whole registry, so the
+    /// badge agrees with what is on screen — a filter that hid three of an app's
+    /// four windows should not leave a "4" next to the one that survived.
+    /// Application-only entries are excluded; they represent no window.
+    private func windowCountsByApplication() -> [pid_t: Int] {
+        var counts: [pid_t: Int] = [:]
+        for window in currentList where !window.isApplicationEntry {
+            counts[window.id.pid, default: 0] += 1
+        }
+        return counts
     }
 
     private func targetScreen() -> NSScreen {

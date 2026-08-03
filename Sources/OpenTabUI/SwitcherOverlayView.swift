@@ -17,13 +17,18 @@ public struct SwitcherViewModel: Equatable {
     /// app icon, which is why the overlay can appear before any capture completes.
     public var thumbnails: [WindowID: NSImage]
 
+    /// How many windows each application has in this list, for the window-count
+    /// badge. Only meaningful above one, which is exactly when it is shown.
+    public var windowCounts: [pid_t: Int]
+
     public init(
         windows: [WindowModel] = [],
         selection: Int = 0,
         appearance: AppearanceSettings = .default,
         searchQuery: String = "",
         isSearching: Bool = false,
-        thumbnails: [WindowID: NSImage] = [:]
+        thumbnails: [WindowID: NSImage] = [:],
+        windowCounts: [pid_t: Int] = [:]
     ) {
         self.windows = windows
         self.selection = selection
@@ -31,6 +36,7 @@ public struct SwitcherViewModel: Equatable {
         self.searchQuery = searchQuery
         self.isSearching = isSearching
         self.thumbnails = thumbnails
+        self.windowCounts = windowCounts
     }
 
     public static func == (lhs: SwitcherViewModel, rhs: SwitcherViewModel) -> Bool {
@@ -67,6 +73,18 @@ public struct SwitcherOverlayView: View {
         SwitcherMetrics.resolve(model.appearance.size, windowCount: model.windows.count)
     }
 
+    /// Nil disables the animation outright, which is what both the app's own
+    /// "animate selection movement" toggle and the system's reduce-motion setting
+    /// ask for. Deliberately brief — the selection has to keep up with someone
+    /// holding the key down and cycling fast.
+    private var selectionAnimation: Animation? {
+        let animations = model.appearance.animations
+        guard animations.animateSelectionMove,
+              MotionPreference.shouldAnimate(userReduceAnimations: animations.reduceAnimations)
+        else { return nil }
+        return .easeOut(duration: 0.09)
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             if model.isSearching {
@@ -78,6 +96,11 @@ public struct SwitcherOverlayView: View {
 
             content
                 .padding(14)
+                // Animates the highlight sliding between entries. Driven off the
+                // selection alone: animating on the whole model would also animate
+                // thumbnails fading in, which arrive asynchronously and would make
+                // the panel look like it was still loading.
+                .animation(selectionAnimation, value: model.selection)
 
             if model.windows.isEmpty {
                 EmptyStateView(isSearching: model.isSearching)
@@ -148,6 +171,7 @@ struct ThumbnailsStyleView: View {
                 ThumbnailCell(
                     window: window,
                     thumbnail: model.thumbnails[window.id],
+                    windowCount: model.windowCounts[window.id.pid] ?? 1,
                     metrics: metrics,
                     advanced: model.appearance.advanced,
                     isSelected: index == model.selection
@@ -163,6 +187,7 @@ struct ThumbnailsStyleView: View {
 private struct ThumbnailCell: View {
     let window: WindowModel
     let thumbnail: NSImage?
+    let windowCount: Int
     let metrics: SwitcherMetrics
     let advanced: AdvancedAppearanceSettings
     let isSelected: Bool
@@ -185,6 +210,11 @@ private struct ThumbnailCell: View {
             .overlay(alignment: .topLeading) {
                 if advanced.showStatusBadges {
                     StatusBadges(window: window).padding(5)
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if advanced.showWindowCountBadge, windowCount > 1 {
+                    WindowCountBadge(count: windowCount).padding(5)
                 }
             }
 
@@ -265,6 +295,12 @@ struct AppIconsStyleView: View {
 
                             if model.appearance.advanced.showStatusBadges {
                                 StatusBadges(window: window)
+                            }
+                        }
+                        .overlay(alignment: .topTrailing) {
+                            let count = model.windowCounts[window.id.pid] ?? 1
+                            if model.appearance.advanced.showWindowCountBadge, count > 1 {
+                                WindowCountBadge(count: count).offset(x: 5, y: -3)
                             }
                         }
                     }
@@ -383,6 +419,24 @@ private struct SelectionBackground: View {
                     .strokeBorder(isSelected ? Color.accentColor : Color.clear, lineWidth: 2.5)
             }
         }
+    }
+}
+
+/// How many windows the owning application has.
+///
+/// Only drawn above one: a "1" on every entry would be noise, and the number is
+/// only telling you something when there is more than one window to disambiguate.
+private struct WindowCountBadge: View {
+    let count: Int
+
+    var body: some View {
+        Text(count > 99 ? "99+" : "\(count)")
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Color.accentColor))
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.35), lineWidth: 0.5))
     }
 }
 
