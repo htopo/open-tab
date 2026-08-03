@@ -31,6 +31,7 @@ final class SwitcherController {
     private var interaction: InteractionSettings
     private var afterRelease: AfterReleaseBehavior
     private var appearance: AppearanceSettings
+    private var actionShortcuts: ActionShortcuts
 
     /// The appearance in force for the current interaction, after the active
     /// shortcut's overrides have been merged in.
@@ -54,12 +55,14 @@ final class SwitcherController {
          shortcuts: [Shortcut] = Shortcut.defaults(),
          interaction: InteractionSettings = .default,
          appearance: AppearanceSettings = .default,
+         actionShortcuts: ActionShortcuts = .default,
          symbolicHotkeys: SymbolicHotkeyManager = SymbolicHotkeyManager()) {
         self.registry = registry
         self.capture = capture
         self.shortcuts = shortcuts
         self.interaction = interaction
         self.appearance = appearance
+        self.actionShortcuts = actionShortcuts
         self.afterRelease = appearance.afterRelease
         self.symbolicHotkeys = symbolicHotkeys
         self.machine = HotkeyStateMachine(interaction: interaction,
@@ -115,7 +118,10 @@ final class SwitcherController {
 
         tap?.updateConfiguration { config in
             config.shortcuts = enabled.map(\.combo)
+            // The tap has to claim whatever the action shortcuts use, or ⌘W would
+            // reach the app underneath and close one of *its* windows instead.
             config.overlayKeyCodes = TapMatcher.defaultOverlayKeyCodes
+                .union(self.actionShortcuts.claimedKeyCodes)
         }
 
         let results = symbolicHotkeys.reconcile(activeShortcuts: enabled.map(\.combo))
@@ -134,6 +140,11 @@ final class SwitcherController {
     func updateInteraction(_ newInteraction: InteractionSettings) {
         interaction = newInteraction
         machine.interaction = newInteraction
+    }
+
+    func updateActionShortcuts(_ newShortcuts: ActionShortcuts) {
+        actionShortcuts = newShortcuts
+        applyConfiguration()
     }
 
     func updateAppearance(_ newAppearance: AppearanceSettings) {
@@ -187,6 +198,14 @@ final class SwitcherController {
     }
 
     private func handleOverlayKey(keyCode: UInt16, flags: CGEventFlags) {
+        // A user-configured action wins over the built-in navigation defaults, so
+        // rebinding "select next" to something else actually takes effect.
+        let modifiers = ModifierSet(eventFlags: flags)
+        if let action = actionShortcuts.action(forKeyCode: keyCode, modifiers: modifiers) {
+            perform(action)
+            return
+        }
+
         switch Int(keyCode) {
         case kVKEscape:
             dispatch(.cancelled)
@@ -197,8 +216,73 @@ final class SwitcherController {
         case kVKRightArrow, kVKDownArrow:
             dispatch(.navigate(delta: 1))
         default:
-            // Phase 6 routes the ⌘W / ⌘M / ⌘Q / ⌘H / ⌘F action shortcuts here.
             break
+        }
+    }
+
+    // MARK: - Actions on the selection
+
+    /// Performs an action on the highlighted entry without closing the switcher.
+    ///
+    /// Staying open is deliberate: closing three windows in a row should take
+    /// three keystrokes, not three full switcher invocations.
+    private func perform(_ action: SwitcherAction) {
+        switch action {
+        case .selectNext:
+            dispatch(.navigate(delta: 1))
+            return
+        case .selectPrevious:
+            dispatch(.navigate(delta: -1))
+            return
+        default:
+            break
+        }
+
+        let index = machine.selection
+        guard currentList.indices.contains(index) else { return }
+        let target = currentList[index]
+
+        Log.overlay.notice(
+            "\(action.displayName, privacy: .public) on \(target.qualifiedTitle, privacy: .public)"
+        )
+
+        let succeeded: Bool
+        switch action {
+        case .closeWindow:      succeeded = WindowActions.close(target)
+        case .minimizeWindow:   succeeded = WindowActions.minimize(target)
+        case .quitApp:          succeeded = WindowActions.quitApplication(target)
+        case .hideApp:          succeeded = WindowActions.hideApplication(target)
+        case .toggleFullscreen: succeeded = WindowActions.toggleFullscreen(target)
+        case .selectNext, .selectPrevious: return
+        }
+
+        guard succeeded else {
+            Log.overlay.notice("\(action.displayName, privacy: .public) was refused by the application")
+            return
+        }
+
+        if action.mutatesWindowList {
+            // Applications process these asynchronously — a close can raise a save
+            // prompt — so the list is rebuilt after a short delay rather than
+            // optimistically patched, which would show a window as gone when the
+            // user is about to cancel the prompt.
+            scheduleListRefresh()
+        }
+    }
+
+    /// Rebuilds the visible list from the registry, keeping the selection sensible.
+    private func scheduleListRefresh() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.panel.isVisible else { return }
+                guard let shortcutIndex = self.machine.state.shortcutIndex,
+                      self.shortcuts.indices.contains(shortcutIndex) else { return }
+
+                self.registry.reconcileInBackground()
+                self.buildList(for: self.shortcuts[shortcutIndex])
+                self.dispatch(.listCountChanged(self.currentList.count))
+                self.refreshOverlayContent()
+            }
         }
     }
 
