@@ -1,0 +1,24 @@
+# Reference UI captures used for specification only — never commit these.
+Screenshot*.png
+*.screenshot.png
+
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved.bak
+
+# Build products
+*.app
+*.dmg
+dist/
+build/
+
+# macOS
+.DS_Store
+
+# Signing material — must never be committed
+*.p12
+*.cer
+*.certSigningRequest
+*.pem
+sparkle_private_key*

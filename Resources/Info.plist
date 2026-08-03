@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>OpenTab</string>
+
+	<!-- NEVER change this identifier. macOS keys Accessibility and Screen Recording
+	     grants to it; changing it silently resets every user's permissions. -->
+	<key>CFBundleIdentifier</key>
+	<string>io.github.htopo.opentab</string>
+
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>OpenTab</string>
+	<key>CFBundleDisplayName</key>
+	<string>OpenTab</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>__VERSION__</string>
+	<key>CFBundleVersion</key>
+	<string>__BUILD__</string>
+	<key>CFBundleIconFile</key>
+	<string>OpenTab</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+
+	<!-- Background utility: no Dock icon, no menu bar of its own. -->
+	<key>LSUIElement</key>
+	<true/>
+
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
+
+	<key>NSAccessibilityUsageDescription</key>
+	<string>OpenTab needs Accessibility access to list your open windows, read their titles, and bring the one you pick to the front.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>OpenTab does not send Apple Events. This entry is present only to describe the app's intent.</string>
+
+	<key>NSHumanReadableCopyright</key>
+	<string>MIT licensed. Copyright (c) 2026 OpenTab contributors.</string>
+
+	<!-- Sparkle appcast. Populated in the release phase; harmless when absent. -->
+	<key>SUFeedURL</key>
+	<string>https://htopo.github.io/open-tab/appcast.xml</string>
+	<key>SUEnableInstallerLauncherService</key>
+	<false/>
+</dict>
+</plist>

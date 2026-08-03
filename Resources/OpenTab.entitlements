@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  OpenTab is deliberately NOT sandboxed.
+
+	  The Accessibility API (AXUIElement) and CGEventTap do not function inside the
+	  App Sandbox, and they are the entire basis of the app. There is therefore no
+	  com.apple.security.app-sandbox key here, and adding one would break the app
+	  rather than harden it. See docs/PERMISSIONS.md.
+
+	  The entitlements below only relax hardened-runtime restrictions that would
+	  otherwise block a legitimately-signed build from resolving CoreGraphics
+	  symbols at runtime.
+	-->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<key>com.apple.security.automation.apple-events</key>
+	<false/>
+</dict>
+</plist>

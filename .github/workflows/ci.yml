@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          sw_vers
+
+      - name: Build
+        run: swift build --configuration debug
+
+      # Unit tests only. Everything that needs Accessibility or Screen Recording
+      # is covered by the manual checklist in docs/QA.md — a CI runner cannot
+      # grant TCC permissions, and a test that silently skips is worse than one
+      # that does not exist.
+      - name: Test
+        run: swift test --configuration debug
+
+      - name: Build release and assemble app bundle
+        run: Scripts/bundle.sh
+
+      - name: Verify bundle
+        run: |
+          APP=dist/OpenTab.app
+          test -x "$APP/Contents/MacOS/OpenTab"
+          test -f "$APP/Contents/Resources/OpenTab.icns"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist" \
+            | grep -qx 'io.github.htopo.opentab'
+          /usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$APP/Contents/Info.plist" \
+            | grep -qx 'true'
+          codesign --verify --deep --strict "$APP"
+
+  lint:
+    name: Repository hygiene
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The reference UI captures used while specifying this app are third-party
+      # screenshots and must never be committed. Fail loudly if one slips in.
+      - name: No screenshots committed
+        run: |
+          if git ls-files | grep -iE '^Screenshot.*\.png$'; then
+            echo "::error::Reference screenshots must not be committed (see .gitignore)"
+            exit 1
+          fi
+
+      - name: Scripts are executable
+        run: |
+          for script in Scripts/*.sh; do
+            test -x "$script" || { echo "::error::$script is not executable"; exit 1; }
+          done
+
+      - name: Version file is well formed
+        run: |
+          grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' <(tr -d '[:space:]' < VERSION; echo)
