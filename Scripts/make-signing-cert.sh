@@ -60,19 +60,50 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
     -config "$WORKDIR/openssl.cnf" 2>/dev/null
 
 P12_PASSWORD="opentab"
+
+# The PKCS#12 algorithms are pinned rather than left to openssl's defaults.
+#
+# OpenSSL 3.x defaults to AES-256-CBC with a SHA-256 MAC, and Apple's Security
+# framework cannot read that — `security import` fails with "MAC verification
+# failed during PKCS12 import (wrong password?)", which points at the password
+# and is therefore about as misleading as an error message can be. Homebrew puts
+# its own openssl ahead of the system one in PATH, so this bites anyone with
+# Homebrew installed, which is most people building from source.
+#
+# These three options are understood by both OpenSSL 3.x and the LibreSSL that
+# ships with macOS, so the script does not have to care which one it found.
 openssl pkcs12 -export \
     -inkey "$WORKDIR/key.pem" \
     -in "$WORKDIR/cert.pem" \
     -out "$WORKDIR/identity.p12" \
-    -passout "pass:$P12_PASSWORD" 2>/dev/null
+    -passout "pass:$P12_PASSWORD" \
+    -certpbe PBE-SHA1-3DES \
+    -keypbe PBE-SHA1-3DES \
+    -macalg sha1 2>/dev/null
 
 echo "==> Importing into the login keychain"
 # -T grants codesign access to the private key without prompting on every build.
-security import "$WORKDIR/identity.p12" \
-    -k "$HOME/Library/Keychains/login.keychain-db" \
-    -P "$P12_PASSWORD" \
-    -T /usr/bin/codesign \
-    -T /usr/bin/security
+if ! security import "$WORKDIR/identity.p12" \
+        -k "$HOME/Library/Keychains/login.keychain-db" \
+        -P "$P12_PASSWORD" \
+        -T /usr/bin/codesign \
+        -T /usr/bin/security; then
+    cat >&2 <<EOF
+
+  Importing the certificate failed.
+
+  If the error mentions "MAC verification failed", the openssl that produced the
+  file writes a PKCS#12 that macOS cannot read. This script pins compatible
+  algorithms, so that should not happen — but if it does, retry with Apple's own
+  openssl:
+
+      PATH=/usr/bin:\$PATH Scripts/make-signing-cert.sh
+
+  openssl in use: $(command -v openssl) — $(openssl version 2>/dev/null)
+
+EOF
+    exit 1
+fi
 
 echo "==> Adding code-signing trust (macOS will ask for your login password)"
 # User trust domain, so no sudo is required. Restricted to code signing only:
