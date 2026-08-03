@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarController: MenuBarController?
     private var onboarding: OnboardingWindowController?
     private var permissions: PermissionsMonitor?
+    private var registry: WindowRegistry?
 
     /// True once the switcher subsystems have been started. Guards against
     /// starting them twice when a permission flickers.
@@ -30,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menuBarController = MenuBarController(
             onOpenSettings: { [weak self] in self?.showSettings() },
+            onLogWindowList: { [weak self] in self?.logWindowList() },
             onQuit: { [weak self] in self?.quit() }
         )
 
@@ -111,13 +113,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         Log.app.notice("Accessibility available — starting switcher subsystems")
 
-        // Phase 2 starts the window registry here.
+        let registry = WindowRegistry()
+        self.registry = registry
+        registry.start()
+
         // Phase 3 installs the event tap and takes over the symbolic hotkeys.
     }
 
     private func stopSwitcher() {
         guard isRunning else { return }
         isRunning = false
+
+        registry?.stop()
+        registry = nil
 
         // Phase 3 releases the event tap and restores symbolic hotkeys here.
     }
@@ -127,6 +135,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showSettings() {
         // Phase 7 replaces this with the real settings window.
         Log.app.notice("Settings requested")
+    }
+
+    /// Dumps what the registry currently believes is open, and how long reading it
+    /// took.
+    ///
+    /// The timing is the point: the overlay has to be on screen in well under
+    /// 100 ms, so the snapshot read has to be effectively free. If this ever
+    /// reports milliseconds rather than microseconds, the incremental registry has
+    /// stopped working and something is re-enumerating on the hot path.
+    private func logWindowList() {
+        guard let registry else {
+            Log.registry.notice("Window list unavailable — switcher not running")
+            return
+        }
+
+        let started = DispatchTime.now()
+        let snapshot = registry.snapshot()
+        let list = WindowListBuilder.build(
+            windows: snapshot.windows,
+            apps: snapshot.apps,
+            context: snapshot.context
+        )
+        let elapsedMS = Double(DispatchTime.now().uptimeNanoseconds - started.uptimeNanoseconds) / 1_000_000
+
+        Log.registry.notice(
+            "Window list: \(list.count) entries from \(snapshot.apps.count) apps, built in \(elapsedMS, format: .fixed(precision: 3))ms"
+        )
+
+        for (index, window) in list.enumerated() {
+            var flags: [String] = []
+            if window.isFocused { flags.append("focused") }
+            if window.isMinimized { flags.append("minimized") }
+            if window.isHidden { flags.append("hidden") }
+            if window.isFullscreen { flags.append("fullscreen") }
+            if window.isApplicationEntry { flags.append("no-windows") }
+
+            let space = window.spaceID.map(String.init) ?? "-"
+            let display = window.displayID.map(String.init) ?? "-"
+            let suffix = flags.isEmpty ? "" : "  [\(flags.joined(separator: ","))]"
+
+            Log.registry.notice(
+                """
+                \(String(format: "%3d", index), privacy: .public). \
+                \(window.qualifiedTitle, privacy: .public) \
+                (wid \(window.id.cgWindowID), pid \(window.id.pid), space \(space, privacy: .public), display \(display, privacy: .public))\
+                \(suffix, privacy: .public)
+                """
+            )
+        }
     }
 
     private func quit() {

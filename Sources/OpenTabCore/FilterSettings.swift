@@ -1,0 +1,132 @@
+import CoreGraphics
+import Foundation
+
+// MARK: - Scopes
+
+/// Which applications' windows to include.
+public enum AppScope: String, Codable, CaseIterable, Sendable {
+    case allApps
+    case activeApp
+    case allAppsExceptActive
+
+    public var displayName: String {
+        switch self {
+        case .allApps:            "All apps"
+        case .activeApp:          "Active app"
+        case .allAppsExceptActive: "All apps except active"
+        }
+    }
+}
+
+/// Which Spaces' windows to include.
+public enum SpaceScope: String, Codable, CaseIterable, Sendable {
+    case allSpaces
+    case activeSpace
+    case visibleSpaces
+
+    public var displayName: String {
+        switch self {
+        case .allSpaces:     "All Spaces"
+        case .activeSpace:   "Active Space"
+        case .visibleSpaces: "Visible Spaces"
+        }
+    }
+}
+
+/// Which screens' windows to include.
+public enum ScreenScope: String, Codable, CaseIterable, Sendable {
+    case allScreens
+    case activeScreen
+
+    public var displayName: String {
+        switch self {
+        case .allScreens:   "All screens"
+        case .activeScreen: "Active screen"
+        }
+    }
+}
+
+/// What to do with a category of window.
+///
+/// `showAtEnd` is not a filter but a sort hint: the windows stay in the list and
+/// are pushed past everything else, which is how "I rarely want these but
+/// sometimes I do" is expressed without a second gesture.
+public enum VisibilityPolicy: String, Codable, CaseIterable, Sendable {
+    case show
+    case hide
+    case showAtEnd
+
+    public var displayName: String {
+        switch self {
+        case .show:      "Show"
+        case .hide:      "Hide"
+        case .showAtEnd: "Show at the end"
+        }
+    }
+}
+
+// MARK: - Settings
+
+/// The Filtering tab of one shortcut. Each shortcut carries its own copy, which
+/// is what lets a user bind ⌘Tab to "everything" and ⌥Tab to "this app only".
+public struct FilterSettings: Codable, Equatable, Sendable {
+    public var apps: AppScope
+    public var spaces: SpaceScope
+    public var screens: ScreenScope
+    public var minimized: VisibilityPolicy
+    public var hidden: VisibilityPolicy
+    public var fullscreen: VisibilityPolicy
+    public var appsWithNoWindows: VisibilityPolicy
+
+    public init(
+        apps: AppScope = .allApps,
+        spaces: SpaceScope = .allSpaces,
+        screens: ScreenScope = .allScreens,
+        minimized: VisibilityPolicy = .show,
+        hidden: VisibilityPolicy = .show,
+        fullscreen: VisibilityPolicy = .show,
+        appsWithNoWindows: VisibilityPolicy = .showAtEnd
+    ) {
+        self.apps = apps
+        self.spaces = spaces
+        self.screens = screens
+        self.minimized = minimized
+        self.hidden = hidden
+        self.fullscreen = fullscreen
+        self.appsWithNoWindows = appsWithNoWindows
+    }
+
+    public static let `default` = FilterSettings()
+}
+
+// MARK: - Context
+
+/// The "where am I right now" facts the scope filters resolve against.
+///
+/// Captured once when the switcher opens rather than read per window, so that a
+/// Space change mid-build cannot produce a list filtered against two different
+/// worlds.
+public struct FilterContext: Equatable, Sendable {
+    /// The frontmost application at the moment the switcher was invoked — not
+    /// OpenTab itself, which never activates.
+    public var activePID: pid_t?
+    public var activeSpaceID: Int?
+    /// Spaces currently visible across all displays. On a multi-display setup with
+    /// separate Spaces there is more than one.
+    public var visibleSpaceIDs: Set<Int>
+    public var activeDisplayID: CGDirectDisplayID?
+
+    public init(
+        activePID: pid_t? = nil,
+        activeSpaceID: Int? = nil,
+        visibleSpaceIDs: Set<Int> = [],
+        activeDisplayID: CGDirectDisplayID? = nil
+    ) {
+        self.activePID = activePID
+        self.activeSpaceID = activeSpaceID
+        self.visibleSpaceIDs = visibleSpaceIDs
+        self.activeDisplayID = activeDisplayID
+    }
+
+    public static let empty = FilterContext()
+}

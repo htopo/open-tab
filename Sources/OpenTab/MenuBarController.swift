@@ -34,11 +34,15 @@ final class MenuBarController {
 
     private var statusItem: NSStatusItem?
     private let onOpenSettings: () -> Void
+    private let onLogWindowList: () -> Void
     private let onQuit: () -> Void
     private var variant: IconVariant = .windows
 
-    init(onOpenSettings: @escaping () -> Void, onQuit: @escaping () -> Void) {
+    init(onOpenSettings: @escaping () -> Void,
+         onLogWindowList: @escaping () -> Void,
+         onQuit: @escaping () -> Void) {
         self.onOpenSettings = onOpenSettings
+        self.onLogWindowList = onLogWindowList
         self.onQuit = onQuit
         show()
     }
@@ -89,12 +93,23 @@ final class MenuBarController {
         menu.addItem(.separator())
 
         menu.addItem(item(title: "Settings…", key: ",", action: #selector(Actions.openSettings)))
+
+        // Diagnostics. Exposed in the normal menu because "what does OpenTab
+        // actually think is open?" is the first question worth answering in any
+        // bug report, and asking a user to run a debug build to find out is a
+        // non-starter.
+        menu.addItem(item(title: "Log Window List",
+                          key: "",
+                          action: #selector(Actions.logWindowList)))
+
         menu.addItem(.separator())
         menu.addItem(item(title: "Quit OpenTab", key: "q", action: #selector(Actions.quit)))
 
         // Menu items need a target that responds to the selectors. A dedicated
         // responder object keeps AppKit selector plumbing out of this class's API.
-        actions = Actions(onOpenSettings: onOpenSettings, onQuit: onQuit)
+        actions = Actions(onOpenSettings: onOpenSettings,
+                          onLogWindowList: onLogWindowList,
+                          onQuit: onQuit)
         for menuItem in menu.items where menuItem.action != nil {
             menuItem.target = actions
         }
@@ -110,14 +125,19 @@ final class MenuBarController {
     /// Selector target for the status menu.
     private final class Actions: NSObject {
         private let onOpenSettings: () -> Void
+        private let onLogWindowList: () -> Void
         private let onQuit: () -> Void
 
-        init(onOpenSettings: @escaping () -> Void, onQuit: @escaping () -> Void) {
+        init(onOpenSettings: @escaping () -> Void,
+             onLogWindowList: @escaping () -> Void,
+             onQuit: @escaping () -> Void) {
             self.onOpenSettings = onOpenSettings
+            self.onLogWindowList = onLogWindowList
             self.onQuit = onQuit
         }
 
         @objc func openSettings() { onOpenSettings() }
+        @objc func logWindowList() { onLogWindowList() }
         @objc func quit() { onQuit() }
     }
 }

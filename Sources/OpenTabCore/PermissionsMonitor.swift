@@ -41,13 +41,12 @@ public final class PermissionsMonitor {
     /// Monitor.
     private static let pollInterval: TimeInterval = 0.75
 
-    // These two are marked nonisolated so `deinit` — which Swift runs outside the
-    // actor — can still tear them down. Every other access is on the main actor.
-    private nonisolated(unsafe) var timer: Timer?
-    private nonisolated(unsafe) var activationObserver: (any NSObjectProtocol)?
+    // Plumbing, not state: changing these must not invalidate a SwiftUI view.
+    @ObservationIgnored private var timer: Timer?
+    @ObservationIgnored private var activationObserver: (any NSObjectProtocol)?
 
-    private let accessibilityProbe: () -> Bool
-    private let screenRecordingProbe: () -> Bool
+    @ObservationIgnored private let accessibilityProbe: () -> Bool
+    @ObservationIgnored private let screenRecordingProbe: () -> Bool
 
     /// Both probes are injected so tests can drive the monitor without a real TCC
     /// state — there is no way to grant or revoke a permission programmatically,
@@ -64,12 +63,10 @@ public final class PermissionsMonitor {
         self.screenRecording = screenRecordingProbe()
     }
 
-    deinit {
-        timer?.invalidate()
-        if let activationObserver {
-            NSWorkspace.shared.notificationCenter.removeObserver(activationObserver)
-        }
-    }
+    // No deinit teardown: Swift runs `deinit` outside the actor, so it cannot
+    // touch main-actor state. `stop()` is the teardown, and the app delegate calls
+    // it during shutdown. The timer holds only a weak reference, so failing to
+    // call it leaks a no-op timer rather than the monitor itself.
 
     // MARK: - Lifecycle
 
