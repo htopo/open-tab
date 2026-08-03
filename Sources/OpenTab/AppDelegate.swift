@@ -16,6 +16,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var permissions: PermissionsMonitor?
     private var registry: WindowRegistry?
     private var switcher: SwitcherController?
+    private var capture: CaptureCoordinator?
+
+    /// Tracks focus transitions so the outgoing window can be photographed before
+    /// it stops being capturable.
+    private var previouslyFocusedWindow: WindowID?
 
     /// True once the switcher subsystems have been started. Guards against
     /// starting them twice when a permission flickers.
@@ -88,6 +93,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onboarding?.dismiss()
         }
 
+        if old.screenRecording != new.screenRecording {
+            // Thumbnails become available or unavailable immediately; no relaunch.
+            capture?.refreshPermission()
+            Log.permissions.notice("Screen Recording now \(new.screenRecording ? "granted" : "denied")")
+        }
+
         if old.accessibility && !new.accessibility {
             // Revoked mid-session, or the code signature changed underneath us.
             Log.permissions.error("Accessibility was revoked; suspending switcher")
@@ -116,9 +127,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let registry = WindowRegistry()
         self.registry = registry
+
+        let capture = CaptureCoordinator()
+        self.capture = capture
+        capture.start()
+
+        // Keep the capture layer's idea of what exists in step with the registry,
+        // and take a last photograph of any window that is about to become
+        // uncapturable. By the time a window reports itself minimized, macOS has
+        // already stopped compositing it and there is nothing left to capture —
+        // losing focus is the last reliable moment.
+        registry.onChange = { [weak self] in
+            guard let self, let registry = self.registry else { return }
+            capture.updateTrackedWindows(registry.windows)
+
+            let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+            for window in registry.windows where window.isFocused {
+                if let previous = self.previouslyFocusedWindow, previous != window.id,
+                   let losing = registry.windows.first(where: { $0.id == previous }) {
+                    capture.captureBeforeItBecomesUnavailable(losing, scale: scale)
+                }
+                self.previouslyFocusedWindow = window.id
+            }
+        }
+
         registry.start()
 
-        let switcher = SwitcherController(registry: registry)
+        let switcher = SwitcherController(registry: registry, capture: capture)
         self.switcher = switcher
         switcher.start()
     }
@@ -131,6 +166,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // and that must happen whether or not anything else succeeds.
         switcher?.stop()
         switcher = nil
+
+        capture?.stop()
+        capture = nil
 
         registry?.stop()
         registry = nil

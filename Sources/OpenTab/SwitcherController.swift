@@ -1,6 +1,7 @@
 import AppKit
 import OpenTabCore
 import OpenTabInput
+import OpenTabShot
 import OpenTabUI
 import SwiftUI
 
@@ -15,9 +16,14 @@ final class SwitcherController {
 
     private let registry: WindowRegistry
     private let symbolicHotkeys: SymbolicHotkeyManager
+    private let capture: CaptureCoordinator
     private var machine: HotkeyStateMachine
     private var tap: EventTap?
     private let panel = OverlayPanel()
+
+    /// Thumbnails for the current interaction. Seeded from cache when the overlay
+    /// opens and filled in as fresh captures arrive.
+    private var thumbnails: [WindowID: NSImage] = [:]
 
     /// Shortcuts in index order. Phase 8 replaces this with the settings store.
     private var shortcuts: [Shortcut]
@@ -44,11 +50,13 @@ final class SwitcherController {
     private var hasWarnedAboutSymbolicHotkeys = false
 
     init(registry: WindowRegistry,
+         capture: CaptureCoordinator,
          shortcuts: [Shortcut] = Shortcut.defaults(),
          interaction: InteractionSettings = .default,
          appearance: AppearanceSettings = .default,
          symbolicHotkeys: SymbolicHotkeyManager = SymbolicHotkeyManager()) {
         self.registry = registry
+        self.capture = capture
         self.shortcuts = shortcuts
         self.interaction = interaction
         self.appearance = appearance
@@ -60,6 +68,14 @@ final class SwitcherController {
         panel.onClickOutside = { [weak self] in
             guard let self, self.interaction.clickOutsideDismisses else { return }
             self.dispatch(.cancelled)
+        }
+
+        // Thumbnails arrive after the overlay is already on screen. Each one
+        // redraws only itself; the panel is never blocked waiting for them.
+        capture.onThumbnail = { [weak self] id, image in
+            guard let self, self.panel.isVisible else { return }
+            self.thumbnails[id] = image
+            self.refreshOverlayContent()
         }
     }
 
@@ -291,20 +307,46 @@ final class SwitcherController {
         // The panel never becomes key, so it does not inherit appearance the way
         // an ordinary window does; the theme has to be applied explicitly.
         panel.setAppearance(nsAppearance(for: activeAppearance.theme))
+
+        // Seed from cache so the very first frame has images. Anything missing
+        // draws as an app icon and is replaced when its capture lands.
+        thumbnails = capture.cachedThumbnails(for: currentList)
+
         refreshOverlayContent()
         panel.show(on: targetScreen())
+
+        requestCaptures()
+    }
+
+    /// Asks for fresh captures, selected window first.
+    ///
+    /// Ordering matters more than it looks: captures are bounded to a handful at a
+    /// time, so whatever is asked for first is what the user sees fill in first.
+    private func requestCaptures() {
+        guard activeAppearance.style == .thumbnails else { return }
+
+        let metrics = SwitcherMetrics.resolve(activeAppearance.size, windowCount: currentList.count)
+        capture.setThumbnailSize(CGSize(width: metrics.thumbnailWidth, height: metrics.thumbnailHeight))
+
+        let selection = machine.selection
+        let ordered = currentList.enumerated()
+            .sorted { abs($0.offset - selection) < abs($1.offset - selection) }
+            .map(\.element)
+
+        capture.requestCaptures(for: ordered, scale: targetScreen().backingScaleFactor)
     }
 
     private func refreshOverlayContent() {
         let model = SwitcherViewModel(
             windows: currentList,
             selection: machine.selection,
-            appearance: activeAppearance,
+            appearance: effectiveAppearance(),
             searchQuery: searchQuery,
             isSearching: {
                 if case .searching = machine.state { return true }
                 return false
-            }()
+            }(),
+            thumbnails: thumbnails
         )
 
         panel.setContent(
@@ -331,6 +373,23 @@ final class SwitcherController {
         )
     }
 
+    /// The appearance actually used to draw, after accounting for what the system
+    /// will permit.
+    ///
+    /// Without Screen Recording there are no thumbnails to draw, so the Thumbnails
+    /// style silently becomes App Icons rather than rendering a grid of empty
+    /// placeholders. The setting itself is left alone — Settings shows it disabled
+    /// with an explanation and a Grant button, and it takes effect the moment
+    /// permission is given.
+    private func effectiveAppearance() -> AppearanceSettings {
+        guard activeAppearance.style == .thumbnails, !capture.isPermitted else {
+            return activeAppearance
+        }
+        var degraded = activeAppearance
+        degraded.style = .appIcons
+        return degraded
+    }
+
     private func nsAppearance(for theme: SwitcherTheme) -> NSAppearance? {
         switch theme {
         case .light:  NSAppearance(named: .aqua)
@@ -346,6 +405,7 @@ final class SwitcherController {
         currentList = []
         unfilteredList = []
         searchQuery = ""
+        thumbnails = [:]
 
         tap?.updateConfiguration { config in
             config.isSwitcherActive = false

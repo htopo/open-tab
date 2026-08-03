@@ -48,7 +48,7 @@ let package = Package(
 
         .testTarget(
             name: "OpenTabCoreTests",
-            dependencies: ["OpenTabCore", "OpenTabAX", "OpenTabInput"]
+            dependencies: ["OpenTabCore", "OpenTabAX", "OpenTabInput", "OpenTabShot"]
         ),
     ]
 )
