@@ -1,6 +1,7 @@
 import AppKit
 import OpenTabCore
 import OpenTabInput
+import OpenTabUI
 import SwiftUI
 
 /// Drives one switch, start to finish.
@@ -23,6 +24,11 @@ final class SwitcherController {
 
     private var interaction: InteractionSettings
     private var afterRelease: AfterReleaseBehavior
+    private var appearance: AppearanceSettings
+
+    /// The appearance in force for the current interaction, after the active
+    /// shortcut's overrides have been merged in.
+    private var activeAppearance: AppearanceSettings = .default
 
     /// The list the current switch is operating on. Built once when the switch
     /// starts, so the selection cannot be invalidated by a window appearing
@@ -40,14 +46,16 @@ final class SwitcherController {
     init(registry: WindowRegistry,
          shortcuts: [Shortcut] = Shortcut.defaults(),
          interaction: InteractionSettings = .default,
-         afterRelease: AfterReleaseBehavior = .focus,
+         appearance: AppearanceSettings = .default,
          symbolicHotkeys: SymbolicHotkeyManager = SymbolicHotkeyManager()) {
         self.registry = registry
         self.shortcuts = shortcuts
         self.interaction = interaction
-        self.afterRelease = afterRelease
+        self.appearance = appearance
+        self.afterRelease = appearance.afterRelease
         self.symbolicHotkeys = symbolicHotkeys
-        self.machine = HotkeyStateMachine(interaction: interaction, afterRelease: afterRelease)
+        self.machine = HotkeyStateMachine(interaction: interaction,
+                                          afterRelease: appearance.afterRelease)
 
         panel.onClickOutside = { [weak self] in
             guard let self, self.interaction.clickOutsideDismisses else { return }
@@ -107,11 +115,15 @@ final class SwitcherController {
         applyConfiguration()
     }
 
-    func updateInteraction(_ newInteraction: InteractionSettings, afterRelease: AfterReleaseBehavior) {
+    func updateInteraction(_ newInteraction: InteractionSettings) {
         interaction = newInteraction
-        self.afterRelease = afterRelease
         machine.interaction = newInteraction
-        machine.afterRelease = afterRelease
+    }
+
+    func updateAppearance(_ newAppearance: AppearanceSettings) {
+        appearance = newAppearance
+        afterRelease = newAppearance.afterRelease
+        machine.afterRelease = newAppearance.afterRelease
     }
 
     /// Manual escape hatch for Settings → Controls → "Restore system shortcuts".
@@ -146,6 +158,8 @@ final class SwitcherController {
         // Build the list on the *first* press of an interaction only. Rebuilding
         // on every press would let the ordering shift under the user's fingers.
         if case .idle = machine.state {
+            activeAppearance = appearance.merging(shortcuts[index].appearance)
+            machine.afterRelease = activeAppearance.afterRelease
             buildList(for: shortcuts[index])
             tap?.updateConfiguration { config in
                 config.isSwitcherActive = true
@@ -274,26 +288,54 @@ final class SwitcherController {
             return
         }
 
+        // The panel never becomes key, so it does not inherit appearance the way
+        // an ordinary window does; the theme has to be applied explicitly.
+        panel.setAppearance(nsAppearance(for: activeAppearance.theme))
         refreshOverlayContent()
-
-        let screen = OverlayPanel.screen(
-            for: .activeScreen,
-            focusedWindowDisplay: currentList.first(where: \.isFocused)?.displayID
-        )
-        panel.show(on: screen)
+        panel.show(on: targetScreen())
     }
 
-    /// Placeholder content. Phase 4 replaces this with the real switcher styles.
     private func refreshOverlayContent() {
+        let model = SwitcherViewModel(
+            windows: currentList,
+            selection: machine.selection,
+            appearance: activeAppearance,
+            searchQuery: searchQuery,
+            isSearching: {
+                if case .searching = machine.state { return true }
+                return false
+            }()
+        )
+
         panel.setContent(
-            PlaceholderOverlayView(
-                windows: currentList,
-                selection: machine.selection,
-                query: searchQuery
+            SwitcherOverlayView(
+                model: model,
+                onHover: { [weak self] index in self?.dispatch(.hovered(index: index)) },
+                onClick: { [weak self] index in
+                    self?.dispatch(.hovered(index: index))
+                    self?.dispatch(.committed)
+                },
+                onSearchChange: { [weak self] query in self?.dispatch(.searchChanged(query)) }
             )
         )
+
         if panel.isVisible {
-            panel.resizeToFit(on: OverlayPanel.screen(for: .activeScreen, focusedWindowDisplay: nil))
+            panel.resizeToFit(on: targetScreen())
+        }
+    }
+
+    private func targetScreen() -> NSScreen {
+        OverlayPanel.screen(
+            for: activeAppearance.screenPlacement,
+            focusedWindowDisplay: currentList.first(where: \.isFocused)?.displayID
+        )
+    }
+
+    private func nsAppearance(for theme: SwitcherTheme) -> NSAppearance? {
+        switch theme {
+        case .light:  NSAppearance(named: .aqua)
+        case .dark:   NSAppearance(named: .darkAqua)
+        case .system: nil
         }
     }
 
@@ -358,61 +400,3 @@ private let kVKLeftArrow = 0x7B
 private let kVKRightArrow = 0x7C
 private let kVKDownArrow = 0x7D
 private let kVKUpArrow = 0x7E
-
-/// Temporary overlay content for phase 3, replaced by the real styles in phase 4.
-private struct PlaceholderOverlayView: View {
-    let windows: [WindowModel]
-    let selection: Int
-    let query: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if !query.isEmpty {
-                Text("Search: \(query)")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.bottom, 4)
-            }
-
-            ForEach(Array(windows.enumerated()), id: \.element.id) { index, window in
-                HStack(spacing: 8) {
-                    if let icon = window.appIcon {
-                        Image(nsImage: icon).resizable().frame(width: 20, height: 20)
-                    }
-                    Text(window.qualifiedTitle)
-                        .lineLimit(1)
-                        .font(.system(size: 13))
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(index == selection ? Color.accentColor.opacity(0.85) : Color.clear)
-                )
-                .foregroundStyle(index == selection ? Color.white : Color.primary)
-            }
-        }
-        .padding(12)
-        .frame(width: 460)
-        .background(VisualEffectBackground())
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-}
-
-/// `NSVisualEffectView` bridged into SwiftUI for the panel background.
-struct VisualEffectBackground: NSViewRepresentable {
-    var material: NSVisualEffectView.Material = .hudWindow
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material
-        view.blendingMode = .behindWindow
-        view.state = .active
-        return view
-    }
-
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {
-        view.material = material
-    }
-}

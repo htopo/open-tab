@@ -172,13 +172,3 @@ final class OverlayPanel {
         }
     }
 }
-
-/// Where the overlay appears on a multi-display setup.
-public enum ScreenPlacement: Equatable, Sendable {
-    case activeScreen
-    case screenWithMouse
-    case screenWithFocusedWindow
-    /// A display chosen by name, so the setting survives a reboot even though
-    /// display IDs do not.
-    case specificDisplay(name: String)
-}
