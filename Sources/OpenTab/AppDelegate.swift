@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var onboarding: OnboardingWindowController?
     private var permissions: PermissionsMonitor?
     private var registry: WindowRegistry?
+    private var switcher: SwitcherController?
 
     /// True once the switcher subsystems have been started. Guards against
     /// starting them twice when a permission flickers.
@@ -117,17 +118,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.registry = registry
         registry.start()
 
-        // Phase 3 installs the event tap and takes over the symbolic hotkeys.
+        let switcher = SwitcherController(registry: registry)
+        self.switcher = switcher
+        switcher.start()
     }
 
     private func stopSwitcher() {
         guard isRunning else { return }
         isRunning = false
 
+        // Order matters: the switcher restores the system's reserved shortcuts,
+        // and that must happen whether or not anything else succeeds.
+        switcher?.stop()
+        switcher = nil
+
         registry?.stop()
         registry = nil
-
-        // Phase 3 releases the event tap and restores symbolic hotkeys here.
     }
 
     // MARK: - Actions
@@ -200,10 +206,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !hasShutDown else { return }
         hasShutDown = true
 
-        permissions?.stop()
+        // First and unconditionally: give the user their ⌘Tab back. Everything
+        // else here is housekeeping, but leaving a reserved shortcut disabled with
+        // nothing bound to it is the worst failure this app can produce.
+        switcher?.stop()
+        switcher = nil
 
-        // Phase 3 hooks symbolic-hotkey restoration in here. Restoring the user's
-        // ⌘Tab is the single most important thing this app does on the way out.
+        registry?.stop()
+        permissions?.stop()
     }
 
     private var hasShutDown = false
