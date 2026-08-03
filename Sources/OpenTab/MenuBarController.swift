@@ -33,10 +33,12 @@ final class MenuBarController {
     }
 
     private var statusItem: NSStatusItem?
+    private let onOpenSettings: () -> Void
     private let onQuit: () -> Void
     private var variant: IconVariant = .windows
 
-    init(onQuit: @escaping () -> Void) {
+    init(onOpenSettings: @escaping () -> Void, onQuit: @escaping () -> Void) {
+        self.onOpenSettings = onOpenSettings
         self.onQuit = onQuit
         show()
     }
@@ -92,7 +94,7 @@ final class MenuBarController {
 
         // Menu items need a target that responds to the selectors. A dedicated
         // responder object keeps AppKit selector plumbing out of this class's API.
-        actions = Actions(onQuit: onQuit)
+        actions = Actions(onOpenSettings: onOpenSettings, onQuit: onQuit)
         for menuItem in menu.items where menuItem.action != nil {
             menuItem.target = actions
         }
@@ -107,14 +109,15 @@ final class MenuBarController {
 
     /// Selector target for the status menu.
     private final class Actions: NSObject {
+        private let onOpenSettings: () -> Void
         private let onQuit: () -> Void
-        init(onQuit: @escaping () -> Void) { self.onQuit = onQuit }
 
-        @objc func openSettings() {
-            // Phase 7 replaces this with the real settings window.
-            Log.app.notice("Settings requested")
+        init(onOpenSettings: @escaping () -> Void, onQuit: @escaping () -> Void) {
+            self.onOpenSettings = onOpenSettings
+            self.onQuit = onQuit
         }
 
+        @objc func openSettings() { onOpenSettings() }
         @objc func quit() { onQuit() }
     }
 }
