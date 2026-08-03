@@ -20,6 +20,8 @@ final class SwitcherController {
     private var machine: HotkeyStateMachine
     private var tap: EventTap?
     private let panel = OverlayPanel()
+    private let highlighter = WindowPreviewHighlighter()
+    private let gestures = GestureMonitor()
 
     /// Thumbnails for the current interaction. Seeded from cache when the overlay
     /// opens and filled in as fresh captures arrive.
@@ -33,6 +35,7 @@ final class SwitcherController {
     private var appearance: AppearanceSettings
     private var actionShortcuts: ActionShortcuts
     private var exceptions: [ExceptionRule]
+    private var gestureSettings: GestureSettings
 
     /// Watches which application is frontmost so the tap knows, synchronously,
     /// whether to pass everything through. Computing this inside the tap callback
@@ -64,6 +67,7 @@ final class SwitcherController {
          appearance: AppearanceSettings = .default,
          actionShortcuts: ActionShortcuts = .default,
          exceptions: [ExceptionRule] = ExceptionRule.shippedDefaults,
+         gesture: GestureSettings = .default,
          symbolicHotkeys: SymbolicHotkeyManager = SymbolicHotkeyManager()) {
         self.registry = registry
         self.capture = capture
@@ -72,6 +76,7 @@ final class SwitcherController {
         self.appearance = appearance
         self.actionShortcuts = actionShortcuts
         self.exceptions = exceptions
+        self.gestureSettings = gesture
         self.afterRelease = appearance.afterRelease
         self.symbolicHotkeys = symbolicHotkeys
         self.machine = HotkeyStateMachine(interaction: interaction,
@@ -80,6 +85,21 @@ final class SwitcherController {
         panel.onClickOutside = { [weak self] in
             guard let self, self.interaction.clickOutsideDismisses else { return }
             self.dispatch(.cancelled)
+        }
+
+        panel.onScroll = { [weak self] delta in
+            guard let self, self.interaction.scrollNavigates else { return }
+            self.dispatch(.navigate(delta: delta))
+        }
+
+        // The gesture opens the switcher with whichever shortcut is first, so it
+        // inherits that shortcut's filtering and appearance rather than needing
+        // its own parallel configuration.
+        gestures.onTrigger = { [weak self] in
+            self?.beginOrAdvance(shortcut: 0, reversed: false)
+        }
+        gestures.onNavigate = { [weak self] delta in
+            self?.dispatch(.navigate(delta: delta))
         }
 
         // Thumbnails arrive after the overlay is already on screen. Each one
@@ -108,6 +128,7 @@ final class SwitcherController {
 
         guard tap.install() else { return }
         observeFrontmostApplication()
+        gestures.update(settings: gestureSettings)
         applyConfiguration()
     }
 
@@ -115,6 +136,8 @@ final class SwitcherController {
         holdTimer?.invalidate()
         holdTimer = nil
         panel.hide()
+        highlighter.tearDown()
+        gestures.stop()
         tap?.uninstall()
         tap = nil
 
@@ -165,6 +188,11 @@ final class SwitcherController {
     func updateExceptions(_ newExceptions: [ExceptionRule]) {
         exceptions = newExceptions
         updatePassThroughState()
+    }
+
+    func updateGesture(_ newGesture: GestureSettings) {
+        gestureSettings = newGesture
+        gestures.update(settings: newGesture)
     }
 
     // MARK: - Exceptions
@@ -448,6 +476,7 @@ final class SwitcherController {
     private func updateSelection(_ index: Int) {
         guard panel.isVisible else { return }
         refreshOverlayContent()
+        updatePreviewHighlight()
     }
 
     // MARK: - Overlay
@@ -467,9 +496,43 @@ final class SwitcherController {
         thumbnails = capture.cachedThumbnails(for: currentList)
 
         refreshOverlayContent()
-        panel.show(on: targetScreen())
+        panel.show(on: targetScreen(), fadeDuration: fadeInDuration)
+        gestures.setSwitcherOpen(true)
 
+        updatePreviewHighlight()
         requestCaptures()
+    }
+
+    /// Fade durations, zeroed when motion should be suppressed.
+    ///
+    /// Honours the system's own "reduce motion" setting as well as OpenTab's
+    /// toggle: a user who asked the OS to reduce motion should not have to ask
+    /// again here.
+    private var shouldAnimate: Bool {
+        MotionPreference.shouldAnimate(
+            userReduceAnimations: activeAppearance.animations.reduceAnimations
+        )
+    }
+
+    private var fadeInDuration: TimeInterval {
+        shouldAnimate ? activeAppearance.animations.fadeInDuration : 0
+    }
+
+    private var fadeOutDuration: TimeInterval {
+        shouldAnimate ? activeAppearance.animations.fadeOutDuration : 0
+    }
+
+    /// Lights up the real window behind the overlay, when the setting is on.
+    private func updatePreviewHighlight() {
+        guard activeAppearance.previewSelectedWindow else {
+            highlighter.hide()
+            return
+        }
+        guard currentList.indices.contains(machine.selection) else {
+            highlighter.hide()
+            return
+        }
+        highlighter.show(for: currentList[machine.selection])
     }
 
     /// Asks for fresh captures, selected window first.
@@ -555,7 +618,9 @@ final class SwitcherController {
     private func endInteraction() {
         holdTimer?.invalidate()
         holdTimer = nil
-        panel.hide()
+        panel.hide(fadeDuration: fadeOutDuration)
+        highlighter.hide()
+        gestures.setSwitcherOpen(false)
         currentList = []
         unfilteredList = []
         searchQuery = ""

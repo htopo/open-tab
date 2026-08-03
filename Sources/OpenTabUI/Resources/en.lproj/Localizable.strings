@@ -1,0 +1,49 @@
+/* OpenTab — English (base) localization.
+
+   Keys are dotted and namespaced by surface. Adding a language means copying
+   this file into <code>.lproj and translating the values; no code changes are
+   needed, because every user-facing string is looked up through L10n.
+
+   Strings that name a macOS feature (Spaces, Accessibility, Screen Recording)
+   should keep Apple's own translation for that feature in the target language
+   rather than being translated literally — users look for the name they see in
+   System Settings. */
+
+/* MARK: - Onboarding */
+"onboarding.title" = "Welcome to OpenTab";
+"onboarding.subtitle" = "Switch between windows, not just apps.";
+"onboarding.explanation" = "OpenTab needs permission from macOS before it can do that.";
+"onboarding.waiting" = "Waiting for Accessibility access…";
+"onboarding.ready" = "Ready to go";
+"onboarding.start" = "Start Using OpenTab";
+"onboarding.quit" = "Quit";
+"onboarding.openSettings" = "Open System Settings";
+
+"permission.required" = "Required";
+"permission.optional" = "Optional";
+"permission.accessibility.title" = "Accessibility";
+"permission.accessibility.explanation" = "Lets OpenTab see your open windows — including minimized ones and windows on other Spaces — bring the one you pick to the front, and notice when you press the shortcut.";
+"permission.accessibility.granted" = "OpenTab can see and switch your windows.";
+"permission.screenRecording.title" = "Screen Recording";
+"permission.screenRecording.explanation" = "Only used to draw live thumbnails of your windows. Skip it and OpenTab shows app icons instead — everything else works exactly the same.";
+"permission.screenRecording.granted" = "Thumbnails are available.";
+
+/* MARK: - Menu bar */
+"menu.settings" = "Settings…";
+"menu.logWindowList" = "Log Window List";
+"menu.quit" = "Quit OpenTab";
+
+/* MARK: - Settings panes */
+"pane.appearance" = "Appearance";
+"pane.controls" = "Controls";
+"pane.general" = "General";
+"pane.exceptions" = "Exceptions";
+"settings.search" = "Search";
+"settings.quit" = "Quit OpenTab";
+"settings.done" = "Done";
+"settings.resetToDefaults" = "Reset to Defaults";
+
+/* MARK: - Overlay */
+"overlay.searchPlaceholder" = "Filter windows";
+"overlay.noWindows" = "No windows to show";
+"overlay.noMatches" = "No windows match";

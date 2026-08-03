@@ -119,6 +119,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if old.exceptions != new.exceptions {
             switcher?.updateExceptions(new.exceptions)
         }
+        if old.gesture != new.gesture {
+            switcher?.updateGesture(new.gesture)
+        }
         if old.general.captureWindowsInBackground != new.general.captureWindowsInBackground {
             capture?.isBackgroundCaptureEnabled = new.general.captureWindowsInBackground
         }
@@ -129,6 +132,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             || old.general.menuBarIconVariant != new.general.menuBarIconVariant {
             menuBarController?.setVariant(new.general.menuBarIconVariant)
             applyMenuBarVisibility(new.general)
+        }
+        if old.general.languageCode != new.general.languageCode {
+            // macOS resolves an app's language at launch, so this takes effect on
+            // the next start rather than now.
+            LanguageOverride.apply(new.general.languageCode)
+            Log.app.notice("Language override set; applies on next launch")
         }
     }
 
@@ -215,7 +224,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             interaction: store.settings.interaction,
             appearance: store.settings.appearance,
             actionShortcuts: store.settings.actionShortcuts,
-            exceptions: store.settings.exceptions
+            exceptions: store.settings.exceptions,
+            gesture: store.settings.gesture
         )
         self.switcher = switcher
         switcher.start()
@@ -296,13 +306,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         onQuit: { NSApplication.shared.terminate(nil) }
     )
 
-    /// Localizations shipped in this build.
+    /// Localizations this build actually ships strings for.
     ///
-    /// Only English so far. The picker and the plumbing exist so that adding a
-    /// localization is a resource change rather than a code change.
-    private static let shippedLanguages: [(code: String, name: String)] = [
-        ("en", "English"),
-    ]
+    /// Read from the resource bundle rather than hard-coded, so the picker cannot
+    /// offer a language whose strings are missing. Only English so far; the
+    /// plumbing exists so that adding one is a resource change, not a code change.
+    private static var shippedLanguages: [(code: String, name: String)] {
+        LanguageOverride.availableLanguages.map { code in
+            // Named in the language itself, which is what someone looking for
+            // their own language will recognise.
+            let locale = Locale(identifier: code)
+            let name = locale.localizedString(forIdentifier: code)
+                ?? Locale.current.localizedString(forIdentifier: code)
+                ?? code
+            return (code, name.localizedCapitalized)
+        }
+    }
 
     // MARK: - Actions
 

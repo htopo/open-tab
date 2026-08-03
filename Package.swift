@@ -11,6 +11,9 @@ import PackageDescription
 
 let package = Package(
     name: "OpenTab",
+    // Base language for the localized strings in OpenTabUI/Resources. Adding a
+    // language means adding a <code>.lproj directory beside en.lproj.
+    defaultLocalization: "en",
     platforms: [
         // 14.0 is driven by SCScreenshotManager.captureImage(contentFilter:configuration:),
         // the only non-deprecated way to grab a single window image. See PLAN §2.1.
@@ -38,7 +41,12 @@ let package = Package(
         .target(name: "OpenTabInput", dependencies: ["OpenTabCore", "OpenTabAX"]),
 
         // SwiftUI view content: overlay, settings panes, onboarding.
-        .target(name: "OpenTabUI", dependencies: ["OpenTabCore", "OpenTabShot"]),
+        // Owns the localized strings, so adding a language is a resource change.
+        .target(
+            name: "OpenTabUI",
+            dependencies: ["OpenTabCore", "OpenTabShot"],
+            resources: [.process("Resources")]
+        ),
 
         // AppDelegate, menu-bar item, NSPanel overlay host, wiring, lifecycle.
         .executableTarget(

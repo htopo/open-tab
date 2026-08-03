@@ -29,7 +29,13 @@ final class OverlayPanel {
     /// Called when the user clicks outside the panel.
     var onClickOutside: (() -> Void)?
 
+    /// Called with a selection delta when the user scrolls, if scroll navigation
+    /// is enabled. Set before the panel is first shown.
+    var onScroll: ((Int) -> Void)?
+
     private var clickMonitor: Any?
+    private var scrollMonitor: Any?
+    private var accumulatedScroll: CGFloat = 0
 
     init() {
         panel = NSPanel(
@@ -75,14 +81,30 @@ final class OverlayPanel {
     var isVisible: Bool { panel.isVisible }
 
     /// Shows the panel centred on `screen`, sized to its content.
-    func show(on screen: NSScreen) {
+    ///
+    /// - Parameter fadeDuration: 0 shows it instantly. The switcher is a
+    ///   latency-critical surface, so the fade is deliberately short and is
+    ///   skipped entirely when motion is reduced.
+    func show(on screen: NSScreen, fadeDuration: TimeInterval = 0) {
         hostingView.layoutSubtreeIfNeeded()
         let size = hostingView.fittingSize
         position(size: size, on: screen)
 
-        // orderFrontRegardless rather than makeKeyAndOrderFront: the panel must
-        // appear without taking key status away from the app underneath.
-        panel.orderFrontRegardless()
+        if fadeDuration > 0 {
+            panel.alphaValue = 0
+            // orderFrontRegardless rather than makeKeyAndOrderFront: the panel
+            // must appear without taking key status away from the app underneath.
+            panel.orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = fadeDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().alphaValue = 1
+            }
+        } else {
+            panel.alphaValue = 1
+            panel.orderFrontRegardless()
+        }
+
         startWatchingForOutsideClicks()
     }
 
@@ -101,10 +123,27 @@ final class OverlayPanel {
         panel.setFrame(NSRect(origin: origin, size: size), display: true)
     }
 
-    func hide() {
+    func hide(fadeDuration: TimeInterval = 0) {
         stopWatchingForOutsideClicks()
         resignKeyIfNeeded()
-        panel.orderOut(nil)
+
+        guard fadeDuration > 0, panel.isVisible else {
+            panel.orderOut(nil)
+            panel.alphaValue = 1
+            return
+        }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = fadeDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            panel.animator().alphaValue = 0
+        } completionHandler: { [weak panel] in
+            // Guard against a new switch having started during the fade — ordering
+            // out then would hide a panel the user is actively looking at.
+            guard let panel, panel.alphaValue < 0.05 else { return }
+            panel.orderOut(nil)
+            panel.alphaValue = 1
+        }
     }
 
     // MARK: - Search mode
@@ -128,13 +167,22 @@ final class OverlayPanel {
     // MARK: - Click-away
 
     private func startWatchingForOutsideClicks() {
-        guard clickMonitor == nil else { return }
-        clickMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
-        ) { [weak self] _ in
-            // A global monitor only sees clicks that land outside this app, which
-            // is exactly the definition of "click away" here.
-            MainActor.assumeIsolated { self?.onClickOutside?() }
+        if clickMonitor == nil {
+            clickMonitor = NSEvent.addGlobalMonitorForEvents(
+                matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+            ) { [weak self] _ in
+                // A global monitor only sees clicks that land outside this app,
+                // which is exactly the definition of "click away" here.
+                MainActor.assumeIsolated { self?.onClickOutside?() }
+            }
+        }
+
+        // Scroll is monitored globally too: the panel never becomes key, so scroll
+        // events are delivered to whatever is underneath rather than to us.
+        if scrollMonitor == nil, onScroll != nil {
+            scrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
+                MainActor.assumeIsolated { self?.handleScroll(event) }
+            }
         }
     }
 
@@ -142,6 +190,33 @@ final class OverlayPanel {
         if let clickMonitor {
             NSEvent.removeMonitor(clickMonitor)
             self.clickMonitor = nil
+        }
+        if let scrollMonitor {
+            NSEvent.removeMonitor(scrollMonitor)
+            self.scrollMonitor = nil
+        }
+        accumulatedScroll = 0
+    }
+
+    /// Converts continuous trackpad scrolling into discrete selection steps.
+    ///
+    /// A trackpad emits a stream of small deltas; forwarding each one would send
+    /// the selection flying across the list. Accumulating to a threshold makes one
+    /// deliberate two-finger swipe move one entry.
+    private func handleScroll(_ event: NSEvent) {
+        // Horizontal dominant means the user is moving along the row; vertical is
+        // handled the same way so a grid works either direction.
+        let delta = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
+            ? event.scrollingDeltaX
+            : event.scrollingDeltaY
+
+        accumulatedScroll += delta
+
+        let threshold: CGFloat = 12
+        while abs(accumulatedScroll) >= threshold {
+            let step = accumulatedScroll > 0 ? -1 : 1
+            accumulatedScroll -= CGFloat(step == 1 ? -threshold : threshold)
+            onScroll?(step)
         }
     }
 
