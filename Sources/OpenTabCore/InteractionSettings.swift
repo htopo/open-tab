@@ -38,13 +38,26 @@ public struct InteractionSettings: Codable, Equatable, Sendable {
     /// Whether advancing past the last entry returns to the first.
     public var wrapAround: Bool
 
+    /// Tapping ⇧ while the switcher is open steps backwards one entry.
+    ///
+    /// When on, ⇧ stops modifying Tab's direction once the switcher is up: Tab
+    /// always moves forward and ⇧ always moves back. The two roles cannot
+    /// coexist — if ⇧ both stepped back on its own *and* reversed Tab, the single
+    /// ⌘⇧Tab gesture would move two entries instead of one.
+    ///
+    /// ⇧ still selects the last entry when it is held for the press that *opens*
+    /// the switcher, which is unambiguous because there is nothing to step back
+    /// from yet.
+    public var shiftStepsBackwards: Bool
+
     public init(
         holdThresholdMS: Int = 150,
         mouseHoverSelects: Bool = true,
         clickOutsideDismisses: Bool = true,
         scrollNavigates: Bool = true,
         escapeCancels: Bool = true,
-        wrapAround: Bool = true
+        wrapAround: Bool = true,
+        shiftStepsBackwards: Bool = true
     ) {
         self.holdThresholdMS = holdThresholdMS
         self.mouseHoverSelects = mouseHoverSelects
@@ -52,6 +65,7 @@ public struct InteractionSettings: Codable, Equatable, Sendable {
         self.scrollNavigates = scrollNavigates
         self.escapeCancels = escapeCancels
         self.wrapAround = wrapAround
+        self.shiftStepsBackwards = shiftStepsBackwards
     }
 
     public var holdThreshold: TimeInterval { Double(holdThresholdMS) / 1000 }
@@ -65,7 +79,14 @@ public struct InteractionSettings: Codable, Equatable, Sendable {
         scrollNavigates = c.value(.scrollNavigates, d.scrollNavigates)
         escapeCancels = c.value(.escapeCancels, d.escapeCancels)
         wrapAround = c.value(.wrapAround, d.wrapAround)
+        shiftStepsBackwards = c.value(.shiftStepsBackwards, d.shiftStepsBackwards)
     }
 
     public static let `default` = InteractionSettings()
+
+    /// Shown under the "Shift steps backwards" toggle.
+    public static let shiftStepsExplanation = """
+        Tap ⇧ while the switcher is open to move back one entry, and Tab always \
+        moves forward. Turn this off to reverse direction with ⇧Tab instead.
+        """
 }

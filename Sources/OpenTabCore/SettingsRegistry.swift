@@ -158,6 +158,8 @@ public enum SettingsRegistry {
               keywords: ["esc", "cancel", "abort", "close"]),
         .init(id: "controls.additional.wrap", title: "Wrap around at the ends", pane: .controls, section: "Additional controls",
               keywords: ["cycle", "loop", "clamp", "stop"]),
+        .init(id: "controls.additional.shiftSteps", title: "Shift steps backwards", pane: .controls, section: "Additional controls",
+              keywords: ["shift", "reverse", "back", "backwards", "previous", "shift tab", "direction"]),
 
         .init(id: "controls.active.close", title: "Close window", pane: .controls, section: "Shortcuts when active",
               keywords: ["command w", "quit window", "shut"]),

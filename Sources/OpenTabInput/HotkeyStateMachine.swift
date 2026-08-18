@@ -177,6 +177,14 @@ public struct HotkeyStateMachine {
             selection = 0
             return [.cancelHoldTimer, .performInstantSwap, .commitSelection(target)]
 
+        case .navigate(let delta):
+            // Navigating during the hold window — a ⇧ tap, a scroll — means the
+            // user is choosing rather than tapping through. Show the panel now,
+            // exactly as a second trigger press does.
+            state = .visible(shortcut: shortcut)
+            selection = advanced(by: delta)
+            return [.cancelHoldTimer, .showOverlay(shortcut: shortcut), .setSelection(selection)]
+
         case .cancelled:
             state = .idle
             selection = 0

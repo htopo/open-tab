@@ -160,6 +160,7 @@ final class SwitcherController {
             // reach the app underneath and close one of *its* windows instead.
             config.overlayKeyCodes = TapMatcher.defaultOverlayKeyCodes
                 .union(self.actionShortcuts.claimedKeyCodes)
+            config.shiftStepsBackwards = self.interaction.shiftStepsBackwards
         }
 
         let results = symbolicHotkeys.reconcile(activeShortcuts: enabled.map(\.combo))
@@ -178,6 +179,8 @@ final class SwitcherController {
     func updateInteraction(_ newInteraction: InteractionSettings) {
         interaction = newInteraction
         machine.interaction = newInteraction
+        // The tap decides what ⇧ means, so it needs this too.
+        applyConfiguration()
     }
 
     func updateActionShortcuts(_ newShortcuts: ActionShortcuts) {
@@ -260,6 +263,9 @@ final class SwitcherController {
 
         case .modifiersReleased:
             dispatch(.modifiersReleased)
+
+        case .stepBackward:
+            dispatch(.navigate(delta: -1))
 
         case .overlayKey(let keyCode, let flags):
             handleOverlayKey(keyCode: keyCode, flags: flags)

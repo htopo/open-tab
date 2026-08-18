@@ -127,6 +127,22 @@ struct HotkeyStateMachineTests {
         }
     }
 
+    /// A ⇧ tap inside the hold window means the user is choosing, not tapping
+    /// through. Waiting out the remaining milliseconds would swallow the step.
+    @Test("Navigating during the hold window opens the overlay")
+    func navigatingWhileArmedShowsOverlay() {
+        var machine = makeMachine(count: 4)
+        _ = machine.handle(.triggerPressed(shortcut: 0, reversed: false))
+        #expect(machine.state == .armed(shortcut: 0))
+
+        let effects = machine.handle(.navigate(delta: -1))
+        #expect(machine.state == .visible(shortcut: 0))
+        #expect(effects.contains(.cancelHoldTimer))
+        #expect(effects.contains(.showOverlay(shortcut: 0)))
+        // From the initial selection of 1, one step back is the current window.
+        #expect(machine.selection == 0)
+    }
+
     // MARK: - Cycling
 
     @Test("Repeated presses advance the selection")

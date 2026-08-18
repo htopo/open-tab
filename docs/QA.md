@@ -24,8 +24,13 @@ Displays:        ____________________
       flash**. Repeat ten times quickly; the panel must never blink.
 - [ ] **Hold and cycle.** Hold ⌘, press Tab repeatedly, release. The window that
       was highlighted is the one that gets focus.
-- [ ] **Reverse.** ⌘⇧Tab moves the selection backwards and wraps correctly at the
-      start of the list.
+- [ ] **Reverse.** With the switcher open, tapping ⇧ moves the selection back one
+      entry per tap and wraps correctly at the start of the list. Holding ⇧ down
+      must not repeat, and releasing it must not step.
+- [ ] **Reverse, classic.** With *Shift steps backwards* off, ⌘⇧Tab moves back
+      one entry per press and a lone ⇧ does nothing.
+- [ ] **No double step.** A single ⌘⇧Tab never moves two entries, under either
+      setting.
 - [ ] **Arrow keys** navigate the grid in all four directions while the overlay is
       open.
 - [ ] **Mouse hover** changes the selection; **click** commits it.

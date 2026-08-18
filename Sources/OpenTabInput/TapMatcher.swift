@@ -30,18 +30,23 @@ public struct TapConfiguration: Equatable, Sendable {
     /// the app underneath.
     public var overlayKeyCodes: Set<UInt16>
 
+    /// Whether tapping ⇧ steps backwards, instead of ⇧ reversing Tab.
+    public var shiftStepsBackwards: Bool
+
     public init(
         shortcuts: [KeyCombo] = [],
         isSwitcherActive: Bool = false,
         activeModifiers: ModifierSet = [],
         passThroughEverything: Bool = false,
-        overlayKeyCodes: Set<UInt16> = []
+        overlayKeyCodes: Set<UInt16> = [],
+        shiftStepsBackwards: Bool = true
     ) {
         self.shortcuts = shortcuts
         self.isSwitcherActive = isSwitcherActive
         self.activeModifiers = activeModifiers
         self.passThroughEverything = passThroughEverything
         self.overlayKeyCodes = overlayKeyCodes
+        self.shiftStepsBackwards = shiftStepsBackwards
     }
 }
 
@@ -53,6 +58,8 @@ public enum TapOutcome: Equatable, Sendable {
     case trigger(shortcut: Int, reversed: Bool)
     /// The shortcut's modifiers came up.
     case modifiersReleased
+    /// ⇧ was pressed on its own while the switcher was open.
+    case stepBackward
     /// A key pressed while the overlay is on screen.
     case overlayKey(keyCode: UInt16, flags: CGEventFlags)
     /// A printable character typed while the overlay is on screen.
@@ -67,9 +74,10 @@ public enum TapOutcome: Equatable, Sendable {
         switch self {
         case .ignore:
             false
-        case .modifiersReleased:
+        case .modifiersReleased, .stepBackward:
             // Modifier events must keep flowing. Consuming a ⌘ key-up would leave
-            // every other app believing ⌘ is still held.
+            // every other app believing ⌘ is still held, and a swallowed ⇧ would
+            // strand the shift state of every other application.
             false
         case .trigger, .overlayKey, .typed:
             true
@@ -95,12 +103,16 @@ public enum TapMatcher {
         return codes
     }()
 
+    /// - Parameter previousFlags: the modifier state at the previous event. Needed
+    ///   because `.flagsChanged` reports the *resulting* state, not what changed;
+    ///   telling a ⇧ press from a ⇧ release means comparing the two.
     public static func evaluate(
         type: CGEventType,
         keyCode: UInt16,
         flags: CGEventFlags,
         characters: String?,
-        config: TapConfiguration
+        config: TapConfiguration,
+        previousFlags: CGEventFlags = []
     ) -> TapOutcome {
 
         // An exception app is frontmost: OpenTab is deliberately invisible.
@@ -115,14 +127,28 @@ public enum TapMatcher {
             // Requiring *all* of them to be down to stay open would end the
             // interaction the moment a user let go of ⇧ while reversing.
             let stillHeld = ModifierSet(eventFlags: flags)
-            return stillHeld.isDisjoint(with: config.activeModifiers) ? .modifiersReleased : .ignore
+            if stillHeld.isDisjoint(with: config.activeModifiers) { return .modifiersReleased }
+
+            // ⇧ going down on its own steps backwards. Only the transition counts:
+            // acting on the resulting state would repeat on every subsequent
+            // modifier event for as long as ⇧ stayed down.
+            let shiftWentDown = flags.contains(.maskShift) && !previousFlags.contains(.maskShift)
+            if config.shiftStepsBackwards, shiftWentDown { return .stepBackward }
+
+            return .ignore
 
         case .keyDown:
             // A shortcut press always wins, including while the overlay is open —
             // that is how repeat-to-cycle works.
             for (index, combo) in config.shortcuts.enumerated()
             where combo.matches(keyCode: keyCode, flags: flags) {
-                let reversed = flags.contains(.maskShift)
+                // ⇧ has one role at a time. Once the switcher is up and ⇧ is
+                // stepping backwards by itself, letting it also reverse Tab would
+                // make a single ⌘⇧Tab move two entries. On the opening press
+                // there is nothing to step back from, so ⇧ still means "start at
+                // the end" — its only unambiguous use.
+                let shiftIsStepping = config.shiftStepsBackwards && config.isSwitcherActive
+                let reversed = flags.contains(.maskShift) && !shiftIsStepping
                 return .trigger(shortcut: index, reversed: reversed)
             }
 

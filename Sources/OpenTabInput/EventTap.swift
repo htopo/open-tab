@@ -37,6 +37,9 @@ public final class EventTap {
 
     private var notificationObservers: [any NSObjectProtocol] = []
 
+    /// Modifier state at the previous event. Tap-thread only; see `handle`.
+    private var lastFlags: CGEventFlags = []
+
     public init(
         handler: @escaping Handler,
         onUnavailable: @escaping @MainActor (InputUnavailableReason) -> Void
@@ -207,6 +210,14 @@ public final class EventTap {
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
 
+        // `.flagsChanged` carries the resulting modifier state, never what
+        // changed, so telling a ⇧ press from a ⇧ release needs the previous
+        // value. Kept here rather than in `TapConfiguration` because it belongs
+        // to the tap thread — it is written and read only inside this callback,
+        // which is serial, so no lock is involved.
+        let previousFlags = lastFlags
+        lastFlags = flags
+
         // Reading the typed characters is only needed for search-mode input, so it
         // is skipped for everything else — it is the most expensive thing in this
         // function.
@@ -217,7 +228,8 @@ public final class EventTap {
             keyCode: keyCode,
             flags: flags,
             characters: characters,
-            config: configuration
+            config: configuration,
+            previousFlags: previousFlags
         )
 
         if outcome != .ignore {

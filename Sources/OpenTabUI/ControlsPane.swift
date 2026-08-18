@@ -522,6 +522,13 @@ struct AdditionalControlsSheet: View {
                 SettingsRow("controls.additional.wrap", "Wrap around at the ends") {
                     Toggle("", isOn: $interaction.wrapAround).labelsHidden()
                 }
+                SettingsRow(
+                    "controls.additional.shiftSteps",
+                    "Shift steps backwards",
+                    subtitle: InteractionSettings.shiftStepsExplanation
+                ) {
+                    Toggle("", isOn: $interaction.shiftStepsBackwards).labelsHidden()
+                }
             }
 
             HStack {

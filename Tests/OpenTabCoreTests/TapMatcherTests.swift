@@ -22,15 +22,107 @@ struct TapMatcherTests {
         shortcuts: [KeyCombo] = [.commandTab],
         active: Bool = false,
         modifiers: ModifierSet = [],
-        passThrough: Bool = false
+        passThrough: Bool = false,
+        shiftSteps: Bool = true
     ) -> TapConfiguration {
         TapConfiguration(
             shortcuts: shortcuts,
             isSwitcherActive: active,
             activeModifiers: modifiers,
             passThroughEverything: passThrough,
-            overlayKeyCodes: TapMatcher.defaultOverlayKeyCodes
+            overlayKeyCodes: TapMatcher.defaultOverlayKeyCodes,
+            shiftStepsBackwards: shiftSteps
         )
+    }
+
+    // MARK: - Shift as a step backwards
+
+    @Test("Pressing shift while the switcher is open steps backwards")
+    func shiftPressStepsBackwards() {
+        let outcome = TapMatcher.evaluate(
+            type: .flagsChanged, keyCode: 0, flags: [.maskCommand, .maskShift],
+            characters: nil, config: config(active: true, modifiers: .command),
+            previousFlags: .maskCommand
+        )
+        #expect(outcome == .stepBackward)
+    }
+
+    /// Only the press counts. Acting on the resulting state instead would fire
+    /// again on every modifier event for as long as ⇧ stayed down.
+    @Test("Holding shift does not step repeatedly")
+    func heldShiftDoesNotRepeat() {
+        let outcome = TapMatcher.evaluate(
+            type: .flagsChanged, keyCode: 0, flags: [.maskCommand, .maskShift],
+            characters: nil, config: config(active: true, modifiers: .command),
+            previousFlags: [.maskCommand, .maskShift]
+        )
+        #expect(outcome == .ignore)
+    }
+
+    @Test("Releasing shift does not step")
+    func releasingShiftDoesNotStep() {
+        let outcome = TapMatcher.evaluate(
+            type: .flagsChanged, keyCode: 0, flags: .maskCommand,
+            characters: nil, config: config(active: true, modifiers: .command),
+            previousFlags: [.maskCommand, .maskShift]
+        )
+        #expect(outcome == .ignore)
+    }
+
+    @Test("Shift before the switcher is open does nothing")
+    func shiftWhileIdleDoesNothing() {
+        let outcome = TapMatcher.evaluate(
+            type: .flagsChanged, keyCode: 0, flags: [.maskCommand, .maskShift],
+            characters: nil, config: config(active: false, modifiers: .command),
+            previousFlags: .maskCommand
+        )
+        #expect(outcome == .ignore)
+    }
+
+    /// A stepping ⇧ must not also reverse Tab, or one ⌘⇧Tab moves two entries.
+    @Test("Shift does not reverse Tab once the switcher is open")
+    func shiftDoesNotAlsoReverseTab() {
+        let outcome = TapMatcher.evaluate(
+            type: .keyDown, keyCode: tab, flags: [.maskCommand, .maskShift],
+            characters: nil, config: config(active: true, modifiers: .command)
+        )
+        #expect(outcome == .trigger(shortcut: 0, reversed: false))
+    }
+
+    /// The opening press is the one place ⇧ can still mean "start at the end":
+    /// there is nothing to step back from yet.
+    @Test("Shift still opens the switcher at the last entry")
+    func shiftReversesTheOpeningPress() {
+        let outcome = TapMatcher.evaluate(
+            type: .keyDown, keyCode: tab, flags: [.maskCommand, .maskShift],
+            characters: nil, config: config(active: false, modifiers: .command)
+        )
+        #expect(outcome == .trigger(shortcut: 0, reversed: true))
+    }
+
+    @Test("With the option off, shift reverses Tab and never steps on its own")
+    func classicShiftBehaviour() {
+        let stepping = TapMatcher.evaluate(
+            type: .flagsChanged, keyCode: 0, flags: [.maskCommand, .maskShift],
+            characters: nil,
+            config: config(active: true, modifiers: .command, shiftSteps: false),
+            previousFlags: .maskCommand
+        )
+        #expect(stepping == .ignore)
+
+        let reversing = TapMatcher.evaluate(
+            type: .keyDown, keyCode: tab, flags: [.maskCommand, .maskShift],
+            characters: nil,
+            config: config(active: true, modifiers: .command, shiftSteps: false)
+        )
+        #expect(reversing == .trigger(shortcut: 0, reversed: true))
+    }
+
+    /// ⇧ is a modifier every other application is also tracking. Swallowing the
+    /// event would leave them all believing ⇧ is still down.
+    @Test("A shift step does not swallow the event")
+    func shiftStepDoesNotSwallow() {
+        #expect(!TapOutcome.stepBackward.swallowsEvent)
     }
 
     // MARK: - Triggering
