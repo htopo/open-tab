@@ -215,12 +215,29 @@ Needed only when **building from source**. Run once per machine:
 Scripts/make-signing-cert.sh
 ```
 
-It creates a 10-year self-signed certificate named **OpenTab Self-Signed**,
-imports it into your login keychain, and marks it trusted for code signing only.
-macOS will ask for your login password when trust is added.
+It needs no passwords and no administrator rights. It creates a dedicated
+keychain (`~/Library/Keychains/opentab-signing.keychain-db`) holding a ten-year
+self-signed certificate named **OpenTab Self-Signed**, and `Scripts/sign.sh`
+finds it automatically.
 
-`Scripts/sign.sh` picks the identity up automatically afterwards. To use a
-different identity instead:
+Three deliberate choices, each of which avoids a way this can go wrong:
+
+- **A dedicated keychain, not the login keychain.** The login keychain needs its
+  own password to write to, and that is not always the account password — it
+  keeps the old one after a password reset through Apple ID or FileVault
+  recovery, and there is then no way to unlock it non-interactively.
+- **No trust settings.** `codesign` signs perfectly well with an untrusted
+  certificate; trust governs *verification*, not signing. Adding it would need
+  either a GUI authorization dialog — impossible over SSH or screen sharing — or
+  sudo, for no benefit. This is why `security find-identity -v` does not list
+  the identity, and why `sign.sh` deliberately omits that flag.
+- **Pinned PKCS#12 algorithms.** OpenSSL 3.x defaults to AES-256 with a SHA-256
+  MAC, which Apple's Security framework cannot read; `security import` then fails
+  with "MAC verification failed … (wrong password?)", blaming the password.
+  Homebrew's openssl usually shadows the system one, so this affects most people
+  building from source.
+
+To use a different identity instead — a real Developer ID, say:
 
 ```sh
 export OPENTAB_SIGN_IDENTITY="Developer ID Application: You (TEAMID)"
@@ -229,16 +246,17 @@ export OPENTAB_SIGN_IDENTITY="Developer ID Application: You (TEAMID)"
 To verify what a built app is signed with:
 
 ```sh
-codesign --display --verbose=2 dist/OpenTab.app
+codesign -d -r- dist/OpenTab.app | grep designated
 ```
 
-`Signature=adhoc` means permissions will reset on every rebuild; anything else
-means they will persist.
+`certificate leaf = H"..."` means permissions persist across rebuilds. `cdhash`
+means it was signed ad-hoc and they will reset on every build.
 
-Building from source also skips login-item registration: macOS records a login
-item's *path*, and a build running out of `dist/` would leave an entry pointing
-into a directory that disappears on the next clean build. Installed copies
-register normally.
+To start over, delete the keychain and re-run the script:
+
+```sh
+security delete-keychain opentab-signing.keychain
+```
 
 ### For CI
 

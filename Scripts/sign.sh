@@ -24,17 +24,37 @@ APP="${1:?usage: sign.sh path/to/OpenTab.app}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ENTITLEMENTS="$ROOT/Resources/OpenTab.entitlements"
 
+OPENTAB_KEYCHAIN="opentab-signing.keychain"
+
 pick_identity() {
     if [[ -n "${OPENTAB_SIGN_IDENTITY:-}" ]]; then
         printf '%s' "$OPENTAB_SIGN_IDENTITY"
         return
     fi
-    # `security find-identity` lists usable code-signing identities.
+
+    # Deliberately no -v. That filters to identities macOS considers *trusted*,
+    # and this certificate is intentionally untrusted: trust governs signature
+    # verification, not signing, and configuring it needs either a GUI
+    # authorization dialog or sudo for no benefit. See make-signing-cert.sh.
+    #
+    # The SHA-1 fingerprint is used rather than the name because it is
+    # unambiguous even if another certificate shares the common name.
     local found
-    found="$(security find-identity -v -p codesigning 2>/dev/null \
+    found="$(security find-identity -p codesigning "$OPENTAB_KEYCHAIN" 2>/dev/null \
              | grep -F 'OpenTab Self-Signed' \
              | head -n1 \
-             | sed -E 's/.*"(.*)".*/\1/')" || true
+             | awk '{print $2}')" || true
+
+    # Fall back to the default search list, which covers a real Developer ID in
+    # the login keychain as well as identities set up before the dedicated
+    # keychain existed.
+    if [[ -z "$found" ]]; then
+        found="$(security find-identity -v -p codesigning 2>/dev/null \
+                 | grep -F 'OpenTab Self-Signed' \
+                 | head -n1 \
+                 | sed -E 's/.*"(.*)".*/\1/')" || true
+    fi
+
     printf '%s' "$found"
 }
 
