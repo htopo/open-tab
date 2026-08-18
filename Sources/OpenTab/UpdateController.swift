@@ -19,9 +19,29 @@ final class UpdateController {
     /// suite get a no-op rather than a crash.
     var isAvailable: Bool { updaterController != nil }
 
+    /// Whether this build carries the EdDSA public key Sparkle verifies with.
+    ///
+    /// Without it Sparkle cannot check any signature, so it puts up a modal alert
+    /// during startup. In an LSUIElement app that alert never comes to the front —
+    /// it is invisible, and it blocks the main dispatch queue, which wedges the
+    /// whole app: no onboarding window, and signal handlers never fire because
+    /// their dispatch sources sit behind the modal run loop.
+    ///
+    /// So an unconfigured Sparkle is treated as "no updater" rather than started
+    /// and left to complain. Development builds have no key; the release process
+    /// adds one.
+    static var isConfigured: Bool {
+        let key = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String
+        return !(key ?? "").isEmpty
+    }
+
     init(policy: UpdatePolicy) {
         guard AppInfo.isBundled else {
             Log.updates.debug("Updater not started: not running from an app bundle")
+            return
+        }
+        guard Self.isConfigured else {
+            Log.updates.notice("Updater not started: this build has no SUPublicEDKey")
             return
         }
         guard policy != .never else {
@@ -104,9 +124,15 @@ final class UpdateController {
     private func presentUnavailableNotice() {
         let alert = NSAlert()
         alert.messageText = "Updates are not available in this build"
-        alert.informativeText = AppInfo.isBundled
-            ? "Update checking is turned off in Settings → General."
-            : "OpenTab is running from a development build rather than an installed app."
+        alert.informativeText = {
+            if !AppInfo.isBundled {
+                return "OpenTab is running from a development build rather than an installed app."
+            }
+            if !Self.isConfigured {
+                return "This build was not published through the release process, so it cannot verify updates."
+            }
+            return "Update checking is turned off in Settings → General."
+        }()
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
         alert.runModal()

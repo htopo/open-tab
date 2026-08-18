@@ -52,14 +52,13 @@
 	     Apple code signing, which is what makes in-app updates workable for an
 	     app that is not notarized.
 
-	     SUPublicEDKey must be filled in with the public half of the key pair
-	     before the first release; see Packaging/README.md. Until then Sparkle
-	     refuses every update rather than accepting an unsigned one, which is the
-	     correct failure. -->
+	     SUPublicEDKey is deliberately ABSENT rather than present-and-empty. The
+	     release process adds it; see Packaging/README.md. OpenTab does not start
+	     the updater at all until it is there, because an unconfigured Sparkle
+	     puts up a modal alert at launch — and in an LSUIElement app that alert is
+	     invisible, so it silently wedges the main thread instead. -->
 	<key>SUFeedURL</key>
 	<string>https://htopo.github.io/open-tab/appcast.xml</string>
-	<key>SUPublicEDKey</key>
-	<string></string>
 	<key>SUEnableInstallerLauncherService</key>
 	<false/>
 	<key>SUEnableAutomaticChecks</key>

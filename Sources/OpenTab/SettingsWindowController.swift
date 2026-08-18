@@ -47,10 +47,19 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         activate(window)
     }
 
+    /// Same activation-policy race as onboarding: promoting the process to a
+    /// regular app and activating in one run-loop turn silently drops the
+    /// activation, and the window opens behind everything.
     private func activate(_ window: NSWindow) {
         NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
     }
 
     func windowWillClose(_ notification: Notification) {

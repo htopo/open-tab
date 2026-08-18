@@ -26,9 +26,7 @@ final class OnboardingWindowController {
 
     func show() {
         if let window {
-            NSApp.setActivationPolicy(.regular)
-            NSApp.activate(ignoringOtherApps: true)
-            window.makeKeyAndOrderFront(nil)
+            present(window)
             return
         }
 
@@ -52,12 +50,32 @@ final class OnboardingWindowController {
         window.isMovableByWindowBackground = true
 
         self.window = window
-
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        present(window)
 
         Log.permissions.notice("Onboarding shown")
+    }
+
+    /// Brings the window to the front of whatever the user is doing.
+    ///
+    /// Switching activation policy and activating in the same run-loop turn does
+    /// not work: AppKit has not finished promoting the process to a regular app
+    /// yet, so the activation is dropped and the window opens silently behind
+    /// everything. The user sees nothing at all happen, which is exactly how this
+    /// was found. Ordering the window front happens immediately so it exists, and
+    /// activation is deferred one turn so it actually takes effect.
+    private func present(_ window: NSWindow) {
+        NSApp.setActivationPolicy(.regular)
+
+        // Regardless of activation state, so the window is at least on screen
+        // even if activation is refused.
+        window.orderFrontRegardless()
+
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
     }
 
     func dismiss() {
