@@ -44,6 +44,12 @@ public enum MenuBarIconVariant: String, Codable, CaseIterable, Sendable {
 /// The General pane.
 public struct GeneralSettings: Codable, Equatable, Sendable {
     public var startAtLogin: Bool
+
+    /// Defaults to on, against the usual instinct to keep a background utility
+    /// invisible. OpenTab has no Dock icon and no windows of its own, so with the
+    /// icon hidden there is no visible way to reach Settings at all — relaunching
+    /// the app is the only route, and nothing on screen says so. Users who prefer
+    /// a clean menu bar can turn it off once they know where the switch is.
     public var showMenuBarIcon: Bool
     public var menuBarIconVariant: MenuBarIconVariant
 
@@ -61,7 +67,7 @@ public struct GeneralSettings: Codable, Equatable, Sendable {
 
     public init(
         startAtLogin: Bool = true,
-        showMenuBarIcon: Bool = false,
+        showMenuBarIcon: Bool = true,
         menuBarIconVariant: MenuBarIconVariant = .windows,
         captureWindowsInBackground: Bool = true,
         languageCode: String? = nil,

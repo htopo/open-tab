@@ -399,7 +399,9 @@ final class SwitcherController {
             showOverlay(for: shortcut)
 
         case .hideOverlay:
-            endInteraction()
+            // Only the UI. A `.commitSelection` may follow in the same batch and
+            // still needs the list.
+            hideOverlayUI()
 
         case .performInstantSwap:
             // Nothing to hide — the panel was never shown. This is what makes a
@@ -630,16 +632,21 @@ final class SwitcherController {
         }
     }
 
-    private func endInteraction() {
+    /// Takes the overlay off screen and stops the machinery that only runs while
+    /// it is up.
+    ///
+    /// Deliberately does **not** discard the window list. The state machine emits
+    /// `.hideOverlay` before `.commitSelection`, so anything cleared here is gone
+    /// by the time the selected window is looked up — which is exactly how commit
+    /// used to silently do nothing after a held ⌘Tab: the list was empty, every
+    /// index was out of range, and the switch was dropped. Clearing is a separate
+    /// step that runs after the selection has been consumed.
+    private func hideOverlayUI() {
         holdTimer?.invalidate()
         holdTimer = nil
         panel.hide(fadeDuration: fadeOutDuration)
         highlighter.hide()
         gestures.setSwitcherOpen(false)
-        currentList = []
-        unfilteredList = []
-        searchQuery = ""
-        thumbnails = [:]
 
         tap?.updateConfiguration { config in
             config.isSwitcherActive = false
@@ -647,11 +654,28 @@ final class SwitcherController {
         }
     }
 
+    /// Drops everything belonging to the finished interaction.
+    private func clearInteractionState() {
+        currentList = []
+        unfilteredList = []
+        searchQuery = ""
+        thumbnails = [:]
+    }
+
+    private func endInteraction() {
+        hideOverlayUI()
+        clearInteractionState()
+    }
+
     private func commit(_ index: Int) {
+        // Ordered so the list is still intact for the lookup above it: hide the
+        // overlay, act on the selection, and only then forget it.
         defer { endInteraction() }
 
         guard currentList.indices.contains(index) else {
-            Log.overlay.notice("Commit ignored: selection \(index) out of range")
+            Log.overlay.notice(
+                "Commit ignored: selection \(index) out of range (list has \(self.currentList.count))"
+            )
             return
         }
 

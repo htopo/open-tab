@@ -106,6 +106,27 @@ struct HotkeyStateMachineTests {
         #expect(effects.contains(.commitSelection(2)))
     }
 
+    /// `.hideOverlay` is emitted *before* `.commitSelection`, so whatever handles
+    /// it must not throw away the window list — the commit still has to look the
+    /// selected window up in it. Getting this wrong made every held ⌘Tab a no-op:
+    /// the overlay appeared, the selection moved, and releasing switched nothing.
+    @Test("Commit emits hideOverlay before commitSelection")
+    func hideOverlayPrecedesCommit() {
+        var machine = makeMachine()
+        _ = machine.handle(.triggerPressed(shortcut: 0, reversed: false))
+        _ = machine.handle(.holdThresholdElapsed)
+
+        let effects = machine.handle(.modifiersReleased)
+        let hideIndex = effects.firstIndex(of: .hideOverlay)
+        let commitIndex = effects.firstIndex { if case .commitSelection = $0 { true } else { false } }
+
+        #expect(hideIndex != nil)
+        #expect(commitIndex != nil)
+        if let hideIndex, let commitIndex {
+            #expect(hideIndex < commitIndex)
+        }
+    }
+
     // MARK: - Cycling
 
     @Test("Repeated presses advance the selection")

@@ -341,7 +341,9 @@ struct SettingsStoreTests {
     func generalDefaults() {
         let general = GeneralSettings.default
         #expect(general.startAtLogin)
-        #expect(!general.showMenuBarIcon)
+        // On, unlike the rest of the "stay out of the way" defaults: it is the
+        // only visible way into Settings for an app with no Dock icon.
+        #expect(general.showMenuBarIcon)
         #expect(general.captureWindowsInBackground)
         #expect(general.languageCode == nil)
         #expect(general.updatePolicy == .checkAndNotify)
