@@ -233,7 +233,8 @@ public enum WindowDiscovery {
             spaceID: PrivateSymbols.workspace(for: cgWindowID),
             displayID: screens.displayContaining(frame),
             frame: frame,
-            lastFocusedAt: previousFocusTimes[id] ?? (isFocused ? Date() : .distantPast),
+            lastFocusedAt: previousFocusTimes[id]
+                ?? (isFocused ? Date() : seededFocusTime(zOrder: record?.zOrder)),
             isFocused: isFocused
         )
     }
@@ -313,7 +314,7 @@ public enum WindowDiscovery {
                     spaceID: PrivateSymbols.workspace(for: record.windowID),
                     displayID: screens.displayContaining(record.bounds),
                     frame: record.bounds,
-                    lastFocusedAt: previousFocusTimes[id] ?? .distantPast,
+                    lastFocusedAt: previousFocusTimes[id] ?? seededFocusTime(zOrder: record.zOrder),
                     isFocused: false
                 )
             }
@@ -366,6 +367,29 @@ public enum WindowDiscovery {
         public let bounds: CGRect
         public let isOnScreen: Bool
         public let title: String?
+        /// Depth in the window server's list, which is ordered front to back.
+        public let zOrder: Int
+    }
+
+    /// A stand-in "last focused" time for a window never seen focused.
+    ///
+    /// Most-recently-used ordering can only know about focus changes observed
+    /// since launch. Everything else used to share one timestamp — `distantPast` —
+    /// which left their relative order to however the enumeration happened to
+    /// visit applications, and meant the first time any of them was touched it
+    /// leapt from wherever it was to the front. Watching a second browser window
+    /// fall to the bottom of the list and later jump most of the way up, without
+    /// ever having been used, is what that looks like.
+    ///
+    /// The window server lists windows front to back, which is the closest thing
+    /// to a used-recently order that exists before we started watching: the window
+    /// in front is the one you were last looking at. Seeding from it puts unseen
+    /// windows in the order the user already perceives, and keeps them there.
+    ///
+    /// Dated to 1970 so that any genuine focus, recorded with the current time,
+    /// outranks every seed no matter how deep the stack.
+    static func seededFocusTime(zOrder: Int?) -> Date {
+        Date(timeIntervalSince1970: -Double(zOrder ?? 1_000_000))
     }
 
     /// Snapshots the window server's view, keyed by window ID.
@@ -380,7 +404,7 @@ public enum WindowDiscovery {
         var result: [CGWindowID: CGWindowRecord] = [:]
         result.reserveCapacity(raw.count)
 
-        for entry in raw {
+        for (depth, entry) in raw.enumerated() {
             guard let number = entry[kCGWindowNumber as String] as? NSNumber,
                   let ownerPID = entry[kCGWindowOwnerPID as String] as? NSNumber
             else { continue }
@@ -396,7 +420,8 @@ public enum WindowDiscovery {
                 layer: (entry[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0,
                 bounds: bounds,
                 isOnScreen: (entry[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue ?? false,
-                title: entry[kCGWindowName as String] as? String
+                title: entry[kCGWindowName as String] as? String,
+                zOrder: depth
             )
         }
         return result

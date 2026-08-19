@@ -764,3 +764,50 @@ struct SearchTests {
         #expect(WindowListBuilder.search(windows, query: "zzzz").isEmpty)
     }
 }
+
+/// Seeding the most-recently-used order for windows never seen focused.
+///
+/// MRU can only know about focus changes observed since launch. What it does with
+/// everything else decides the list a user sees the first time they press ⌘Tab,
+/// and decided — before this — that all of it was equally ancient.
+@Suite("Focus time seeding")
+struct FocusSeedTests {
+
+    /// The window server lists front to back, so a lower depth is a window seen
+    /// more recently.
+    @Test("Windows nearer the front seed as more recently used")
+    func frontWindowsSeedNewer() {
+        let front = WindowDiscovery.seededFocusTime(zOrder: 0)
+        let middle = WindowDiscovery.seededFocusTime(zOrder: 3)
+        let back = WindowDiscovery.seededFocusTime(zOrder: 12)
+
+        #expect(front > middle)
+        #expect(middle > back)
+    }
+
+    /// A window the server has no depth for must not outrank one it does.
+    @Test("An unknown depth seeds oldest")
+    func unknownDepthSeedsOldest() {
+        #expect(WindowDiscovery.seededFocusTime(zOrder: nil)
+                < WindowDiscovery.seededFocusTime(zOrder: 100_000))
+    }
+
+    /// Otherwise the first real focus would not move a window to the front, which
+    /// is the whole point of the ordering.
+    @Test("Any real focus outranks every seed")
+    func realFocusOutranksSeeds() {
+        let now = Date()
+        #expect(WindowDiscovery.seededFocusTime(zOrder: 0) < now)
+        #expect(WindowDiscovery.seededFocusTime(zOrder: -50) < now)
+    }
+
+    /// The failure this replaces: every unseen window sharing one timestamp, so
+    /// their order came from whatever the enumeration happened to do, and the
+    /// first touch sent one of them flying up the list.
+    @Test("Seeds are distinct rather than all equal")
+    func seedsAreDistinct() {
+        let seeds = (0..<8).map { WindowDiscovery.seededFocusTime(zOrder: $0) }
+        #expect(Set(seeds).count == seeds.count)
+        #expect(seeds == seeds.sorted(by: >))
+    }
+}
