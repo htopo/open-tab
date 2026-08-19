@@ -71,6 +71,15 @@ final class SwitcherController {
     /// the overlay closes must not leak into the next one.
     private var isOtherSpacesRevealed = false
 
+    /// Desktop columns for the current list. Empty unless the space bar is held.
+    private var spaceSections: [SpaceSection] = []
+
+    /// Space identifier to user-facing Desktop number.
+    ///
+    /// Computed from every window the registry knows about, not just the ones on
+    /// screen, so the numbers do not shift when the list changes underneath.
+    private var desktopNumbering: [Int: Int] = [:]
+
     /// Reported once per launch when the takeover is impossible, rather than on
     /// every reconcile.
     private var hasWarnedAboutSymbolicHotkeys = false
@@ -343,28 +352,51 @@ final class SwitcherController {
               shortcuts.indices.contains(index) else { return }
 
         isOtherSpacesRevealed = revealed
-
-        let selectedID = currentList.indices.contains(machine.selection)
-            ? currentList[machine.selection].id
-            : nil
-
         buildList(for: shortcuts[index])
         dispatch(.listCountChanged(currentList.count))
 
-        if let selectedID, let restored = currentList.firstIndex(where: { $0.id == selectedID }) {
-            machine.setSelection(restored)
+        // Revealing jumps to the first entry of the next Desktop; letting go
+        // returns to the top of the list that was there before. The selection is
+        // not preserved across the change on purpose: the point of the gesture is
+        // to go somewhere else, and coming back should leave you where you
+        // started rather than wherever the peek wandered to.
+        if revealed, let next = spaceSections.first(where: { !$0.isCurrent }) {
+            machine.setSelection(next.range.lowerBound)
+        } else {
+            machine.setSelection(0)
         }
 
         // Newly revealed windows have no thumbnail yet, and the panel has to
-        // resize for the longer list.
+        // resize for the extra columns.
         thumbnails.merge(capture.cachedThumbnails(for: currentList)) { existing, _ in existing }
         refreshOverlayContent()
         requestCaptures()
         updatePreviewHighlight()
+        updateSpaceKeyClaim()
 
         Log.overlay.notice(
-            "Other Spaces \(revealed ? "revealed" : "hidden", privacy: .public): \(self.currentList.count) entries"
+            """
+            Other Spaces \(revealed ? "revealed" : "hidden", privacy: .public): \
+            \(self.currentList.count) entries in \(self.spaceSections.count) Desktop(s), \
+            selection \(self.machine.selection)
+            """
         )
+    }
+
+    /// Jumps the selection to the first entry of a Desktop, by its number.
+    ///
+    /// Only reachable while the columns are on screen, which is also the only time
+    /// the numbers are visible — asking someone to press 2 without showing them
+    /// which Desktop is 2 would be a guessing game.
+    private func selectDesktop(number: Int) {
+        guard let section = spaceSections.first(where: { $0.number == number }) else {
+            Log.overlay.notice("No Desktop \(number) in the current list")
+            return
+        }
+        machine.setSelection(section.range.lowerBound)
+        refreshOverlayContent()
+        updatePreviewHighlight()
+        Log.overlay.notice("Jumped to Desktop \(number), selection \(self.machine.selection)")
     }
 
     private func handleOverlayKey(keyCode: UInt16, flags: CGEventFlags, isKeyDown: Bool) {
@@ -379,6 +411,12 @@ final class SwitcherController {
         // application underneath does not see an unbalanced key-up; acting on it
         // as well moved the selection two entries per arrow press.
         guard isKeyDown else { return }
+
+        if spaceSections.count > 1,
+           let digit = TapMatcher.digitKeyCodesInOrder.firstIndex(of: keyCode) {
+            selectDesktop(number: digit + 1)
+            return
+        }
 
         // A user-configured action wins over the built-in navigation defaults, so
         // rebinding "select next" to something else actually takes effect.
@@ -555,6 +593,25 @@ final class SwitcherController {
             context: snapshot.context
         )
         searchQuery = ""
+
+        // Split into Desktop columns only while the space bar is revealing them.
+        // The rest of the time a single list is what the user asked for, and the
+        // extra reordering would move entries around for no reason.
+        if isOtherSpacesRevealed {
+            desktopNumbering = SpaceGrouping.numbering(
+                for: snapshot.windows.compactMap(\.spaceID)
+            )
+            let grouped = SpaceGrouping.sectioned(
+                unfilteredList,
+                currentSpaceID: snapshot.context.activeSpaceID,
+                numbering: desktopNumbering
+            )
+            unfilteredList = grouped.windows
+            spaceSections = grouped.sections
+        } else {
+            spaceSections = []
+        }
+
         currentList = unfilteredList
         machine.setCount(currentList.count)
 
@@ -697,7 +754,10 @@ final class SwitcherController {
                 return false
             }(),
             thumbnails: thumbnails,
-            windowCounts: windowCountsByApplication()
+            windowCounts: windowCountsByApplication(),
+            // Searching collapses back to one list: the columns describe Desktops,
+            // and a filtered list is no longer a description of any Desktop.
+            spaceSections: searchQuery.isEmpty ? spaceSections : []
         )
 
         panel.setContent(
@@ -787,13 +847,23 @@ final class SwitcherController {
             config.isSwitcherActive = false
             config.activeModifiers = []
             config.claimsSpaceKey = false
+            config.claimsDigitKeys = false
         }
     }
 
-    /// Tells the tap whether to swallow the space bar right now.
+    /// Tells the tap whether to swallow the space bar and the digits right now.
+    ///
+    /// The digits are claimed only while the Desktop columns are actually drawn.
+    /// Taking them any earlier would break typing a number into the search field,
+    /// and taking them when there is nothing to jump to would swallow a keystroke
+    /// to no effect.
     private func updateSpaceKeyClaim() {
-        let claims = isSpaceKeyClaimed
-        tap?.updateConfiguration { config in config.claimsSpaceKey = claims }
+        let claimsSpace = isSpaceKeyClaimed
+        let claimsDigits = spaceSections.count > 1
+        tap?.updateConfiguration { config in
+            config.claimsSpaceKey = claimsSpace
+            config.claimsDigitKeys = claimsDigits
+        }
     }
 
     /// Drops everything belonging to the finished interaction.
@@ -803,6 +873,7 @@ final class SwitcherController {
         searchQuery = ""
         thumbnails = [:]
         isOtherSpacesRevealed = false
+        spaceSections = []
         pointerAnchor = nil
     }
 

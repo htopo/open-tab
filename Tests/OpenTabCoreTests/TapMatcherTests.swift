@@ -188,6 +188,39 @@ struct TapMatcherTests {
         #expect(down != up)
     }
 
+    // MARK: - Desktop digits
+
+    @Test("Digits are claimed only while the Desktop columns are up")
+    func digitsClaimedOnlyWithColumns() {
+        let one = TapMatcher.digitKeyCodesInOrder[0]
+
+        let withColumns = TapMatcher.evaluate(
+            type: .keyDown, keyCode: one, flags: .maskCommand, characters: "1",
+            config: TapConfiguration(shortcuts: [.commandTab], isSwitcherActive: true,
+                                     activeModifiers: .command, claimsDigitKeys: true)
+        )
+        #expect(withColumns == .overlayKey(keyCode: one, flags: .maskCommand, isKeyDown: true))
+
+        // Without columns a digit is a character, and must reach the search field.
+        let without = TapMatcher.evaluate(
+            type: .keyDown, keyCode: one, flags: [], characters: "1",
+            config: TapConfiguration(shortcuts: [.commandTab], isSwitcherActive: true,
+                                     activeModifiers: .command, claimsDigitKeys: false)
+        )
+        #expect(without == .typed("1"))
+    }
+
+    /// The codes are not contiguous — 5 and 6 are swapped relative to the rest —
+    /// so the order is the mapping and getting it wrong sends the user to the
+    /// wrong Desktop.
+    @Test("Digit codes are in Desktop order")
+    func digitCodesAreOrdered() {
+        #expect(TapMatcher.digitKeyCodesInOrder.count == 9)
+        #expect(TapMatcher.digitKeyCodesInOrder[4] == 0x17)  // 5
+        #expect(TapMatcher.digitKeyCodesInOrder[5] == 0x16)  // 6
+        #expect(Set(TapMatcher.digitKeyCodesInOrder).count == 9)
+    }
+
     // MARK: - Triggering
 
     @Test("The bound combination fires its shortcut")

@@ -21,6 +21,14 @@ public struct SwitcherViewModel: Equatable {
     /// badge. Only meaningful above one, which is exactly when it is shown.
     public var windowCounts: [pid_t: Int]
 
+    /// One entry per Desktop represented in `windows`, in draw order.
+    ///
+    /// Empty in the ordinary case. Populated only while the space bar is held to
+    /// reveal the other Desktops, which is the one moment the extra structure
+    /// earns the space it takes: the rest of the time a single list is what the
+    /// user wants to read.
+    public var spaceSections: [SpaceSection]
+
     public init(
         windows: [WindowModel] = [],
         selection: Int = 0,
@@ -28,7 +36,8 @@ public struct SwitcherViewModel: Equatable {
         searchQuery: String = "",
         isSearching: Bool = false,
         thumbnails: [WindowID: NSImage] = [:],
-        windowCounts: [pid_t: Int] = [:]
+        windowCounts: [pid_t: Int] = [:],
+        spaceSections: [SpaceSection] = []
     ) {
         self.windows = windows
         self.selection = selection
@@ -37,6 +46,7 @@ public struct SwitcherViewModel: Equatable {
         self.isSearching = isSearching
         self.thumbnails = thumbnails
         self.windowCounts = windowCounts
+        self.spaceSections = spaceSections
     }
 
     public static func == (lhs: SwitcherViewModel, rhs: SwitcherViewModel) -> Bool {
@@ -45,6 +55,7 @@ public struct SwitcherViewModel: Equatable {
             && lhs.isSearching == rhs.isSearching
             && lhs.appearance == rhs.appearance
             && lhs.windows == rhs.windows
+            && lhs.spaceSections == rhs.spaceSections
             && lhs.thumbnails.count == rhs.thumbnails.count
     }
 }
@@ -130,14 +141,100 @@ public struct SwitcherOverlayView: View {
 
     @ViewBuilder
     private var content: some View {
+        if model.spaceSections.count > 1 {
+            SpaceColumnsView(model: model, metrics: metrics, onHover: onHover, onClick: onClick)
+        } else {
+            styleView(for: model.windows, offset: 0)
+        }
+    }
+
+    @ViewBuilder
+    private func styleView(for windows: [WindowModel], offset: Int) -> some View {
         switch model.appearance.style {
         case .thumbnails:
-            ThumbnailsStyleView(model: model, metrics: metrics, onHover: onHover, onClick: onClick)
+            ThumbnailsStyleView(model: model, metrics: metrics, onHover: onHover, onClick: onClick,
+                                slice: windows, offset: offset)
         case .appIcons:
-            AppIconsStyleView(model: model, metrics: metrics, onHover: onHover, onClick: onClick)
+            AppIconsStyleView(model: model, metrics: metrics, onHover: onHover, onClick: onClick,
+                              slice: windows, offset: offset)
         case .titles:
-            TitlesStyleView(model: model, metrics: metrics, onHover: onHover, onClick: onClick)
+            TitlesStyleView(model: model, metrics: metrics, onHover: onHover, onClick: onClick,
+                            slice: windows, offset: offset)
         }
+    }
+}
+
+// MARK: - Desktop columns
+
+/// One column per Desktop, drawn while the space bar reveals the hidden ones.
+///
+/// A column rather than a longer list because the question being asked changes:
+/// normally it is "which window", but with every Desktop on screen it becomes
+/// "which Desktop, then which window". Splicing the other Desktops into one flat
+/// list answers neither — the user loses the boundary they were reasoning about,
+/// and the entries they were already looking at shift under them.
+///
+/// The headings are numbered, and those numbers are the navigation: pressing 2
+/// jumps to Desktop 2. That only works if what is on screen says which number is
+/// which, so the labels are not decoration.
+struct SpaceColumnsView: View {
+    let model: SwitcherViewModel
+    let metrics: SwitcherMetrics
+    let onHover: (Int) -> Void
+    let onClick: (Int) -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 20) {
+            ForEach(Array(model.spaceSections.enumerated()), id: \.offset) { index, section in
+                if index > 0 {
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.10))
+                        .frame(width: 1)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    header(for: section)
+                    styleView(
+                        windows: Array(model.windows[section.range]),
+                        offset: section.range.lowerBound
+                    )
+                }
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder
+    private func styleView(windows: [WindowModel], offset: Int) -> some View {
+        switch model.appearance.style {
+        case .thumbnails:
+            ThumbnailsStyleView(model: model, metrics: metrics, onHover: onHover, onClick: onClick,
+                                slice: windows, offset: offset)
+        case .appIcons:
+            AppIconsStyleView(model: model, metrics: metrics, onHover: onHover, onClick: onClick,
+                              slice: windows, offset: offset)
+        case .titles:
+            TitlesStyleView(model: model, metrics: metrics, onHover: onHover, onClick: onClick,
+                            slice: windows, offset: offset)
+        }
+    }
+
+    private func header(for section: SpaceSection) -> some View {
+        HStack(spacing: 6) {
+            Text(section.title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(section.isCurrent ? .primary : .secondary)
+
+            if section.isCurrent {
+                Text("current")
+                    .font(.system(size: 9, weight: .medium))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Color.primary.opacity(0.10)))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.leading, 2)
     }
 }
 
@@ -151,9 +248,19 @@ struct ThumbnailsStyleView: View {
     let onHover: (Int) -> Void
     let onClick: (Int) -> Void
 
+    /// The entries this instance draws, and where they start in `model.windows`.
+    ///
+    /// Selection is a single index into the whole list, so a view drawing only a
+    /// slice of it has to add its offset back before comparing or reporting —
+    /// otherwise every Desktop column would highlight its own first entry.
+    var slice: [WindowModel]? = nil
+    var offset: Int = 0
+
+    private var windows: [WindowModel] { slice ?? model.windows }
+
     private var columns: Int {
         SwitcherLayout.columnCount(
-            forItemCount: model.windows.count,
+            forItemCount: windows.count,
             maxColumns: model.appearance.advanced.maxColumns,
             maxRows: model.appearance.advanced.maxRows
         )
@@ -167,18 +274,18 @@ struct ThumbnailsStyleView: View {
                            count: max(1, columns)),
             spacing: spacing
         ) {
-            ForEach(Array(model.windows.enumerated()), id: \.element.id) { index, window in
+            ForEach(Array(windows.enumerated()), id: \.element.id) { index, window in
                 ThumbnailCell(
                     window: window,
                     thumbnail: model.thumbnails[window.id],
                     windowCount: model.windowCounts[window.id.pid] ?? 1,
                     metrics: metrics,
                     advanced: model.appearance.advanced,
-                    isSelected: index == model.selection
+                    isSelected: index + offset == model.selection
                 )
                 .contentShape(Rectangle())
-                .onHover { inside in if inside { onHover(index) } }
-                .onTapGesture { onClick(index) }
+                .onHover { inside in if inside { onHover(index + offset) } }
+                .onTapGesture { onClick(index + offset) }
             }
         }
     }
@@ -263,9 +370,19 @@ struct AppIconsStyleView: View {
     let onHover: (Int) -> Void
     let onClick: (Int) -> Void
 
+    /// The entries this instance draws, and where they start in `model.windows`.
+    ///
+    /// Selection is a single index into the whole list, so a view drawing only a
+    /// slice of it has to add its offset back before comparing or reporting —
+    /// otherwise every Desktop column would highlight its own first entry.
+    var slice: [WindowModel]? = nil
+    var offset: Int = 0
+
+    private var windows: [WindowModel] { slice ?? model.windows }
+
     private var columns: Int {
         SwitcherLayout.columnCount(
-            forItemCount: model.windows.count,
+            forItemCount: windows.count,
             maxColumns: max(model.appearance.advanced.maxColumns, 8),
             maxRows: model.appearance.advanced.maxRows
         )
@@ -280,7 +397,7 @@ struct AppIconsStyleView: View {
                                count: max(1, columns)),
                 spacing: spacing
             ) {
-                ForEach(Array(model.windows.enumerated()), id: \.element.id) { index, window in
+                ForEach(Array(windows.enumerated()), id: \.element.id) { index, window in
                     VStack(spacing: 0) {
                         ZStack(alignment: .topLeading) {
                             if let icon = window.appIcon {
@@ -307,20 +424,23 @@ struct AppIconsStyleView: View {
                     .padding(8)
                     .background(
                         SelectionBackground(
-                            isSelected: index == model.selection,
+                            isSelected: index + offset == model.selection,
                             style: model.appearance.advanced.highlightStyle
                         )
                     )
                     .contentShape(Rectangle())
-                    .onHover { inside in if inside { onHover(index) } }
-                    .onTapGesture { onClick(index) }
+                    .onHover { inside in if inside { onHover(index + offset) } }
+                    .onTapGesture { onClick(index + offset) }
                 }
             }
 
             // The icon row alone cannot say which *window* is selected when an app
-            // has several, so the name is spelled out underneath.
-            if model.windows.indices.contains(model.selection) {
-                Text(model.windows[model.selection].qualifiedTitle)
+            // has several, so the name is spelled out underneath. In Desktop
+            // columns only the column holding the selection shows it — one caption
+            // per column would repeat the same name across the panel.
+            let localSelection = model.selection - offset
+            if windows.indices.contains(localSelection) {
+                Text(windows[localSelection].qualifiedTitle)
                     .font(.system(size: model.appearance.advanced.titleFontSize + 1, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -339,18 +459,28 @@ struct TitlesStyleView: View {
     let onHover: (Int) -> Void
     let onClick: (Int) -> Void
 
+    /// The entries this instance draws, and where they start in `model.windows`.
+    ///
+    /// Selection is a single index into the whole list, so a view drawing only a
+    /// slice of it has to add its offset back before comparing or reporting —
+    /// otherwise every Desktop column would highlight its own first entry.
+    var slice: [WindowModel]? = nil
+    var offset: Int = 0
+
+    private var windows: [WindowModel] { slice ?? model.windows }
+
     private var rowWidth: Double {
         switch model.appearance.size {
         case .small:  380
         case .medium: 480
         case .large:  600
-        case .auto:   model.windows.count > 12 ? 380 : 480
+        case .auto:   windows.count > 12 ? 380 : 480
         }
     }
 
     var body: some View {
         VStack(spacing: 1) {
-            ForEach(Array(model.windows.enumerated()), id: \.element.id) { index, window in
+            ForEach(Array(windows.enumerated()), id: \.element.id) { index, window in
                 HStack(spacing: 9) {
                     if let icon = window.appIcon {
                         Image(nsImage: icon)
@@ -387,14 +517,14 @@ struct TitlesStyleView: View {
                 .frame(width: rowWidth, alignment: .leading)
                 .background(
                     SelectionBackground(
-                        isSelected: index == model.selection,
+                        isSelected: index + offset == model.selection,
                         style: model.appearance.advanced.highlightStyle,
                         cornerRadius: 6
                     )
                 )
                 .contentShape(Rectangle())
-                .onHover { inside in if inside { onHover(index) } }
-                .onTapGesture { onClick(index) }
+                .onHover { inside in if inside { onHover(index + offset) } }
+                .onTapGesture { onClick(index + offset) }
             }
         }
     }

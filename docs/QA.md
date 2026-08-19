@@ -49,6 +49,14 @@ Displays:        ____________________
       travels to that Desktop and the window is frontmost. (Requires Desktop &
       Dock → "When switching to an application, switch to a Space with open
       windows for the application", which is on by default.)
+- [ ] **Desktop columns.** With two or more Desktops in use and the switcher
+      narrowed to the current one, hold space. The other Desktops appear as
+      separate columns to the right, each headed "Desktop N", with the current one
+      first and marked. The selection jumps to the top of the first other Desktop;
+      releasing space returns it to the top of the original list.
+- [ ] **Desktop digits.** While space is held, press 2, 3, … The selection jumps
+      to the top of that Desktop's column. A number with no column does nothing.
+      With the columns down, digits type into the search field as normal.
 - [ ] **Space peek.** Set *Controls → Filtering → Show windows from Spaces* to
       **Active Space**. The list now holds only this Desktop's windows. Hold the
       space bar: the rest appear, and the highlight stays on the same window

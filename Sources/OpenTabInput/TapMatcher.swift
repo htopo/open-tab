@@ -40,6 +40,12 @@ public struct TapConfiguration: Equatable, Sendable {
     /// the search field is a space.
     public var claimsSpaceKey: Bool
 
+    /// Whether the digit keys select a Desktop right now.
+    ///
+    /// True only while the Desktop columns are on screen. Outside that the digits
+    /// are ordinary characters and belong to the search field.
+    public var claimsDigitKeys: Bool
+
     public init(
         shortcuts: [KeyCombo] = [],
         isSwitcherActive: Bool = false,
@@ -47,7 +53,8 @@ public struct TapConfiguration: Equatable, Sendable {
         passThroughEverything: Bool = false,
         overlayKeyCodes: Set<UInt16> = [],
         shiftStepsBackwards: Bool = true,
-        claimsSpaceKey: Bool = false
+        claimsSpaceKey: Bool = false,
+        claimsDigitKeys: Bool = false
     ) {
         self.shortcuts = shortcuts
         self.isSwitcherActive = isSwitcherActive
@@ -56,6 +63,7 @@ public struct TapConfiguration: Equatable, Sendable {
         self.overlayKeyCodes = overlayKeyCodes
         self.shiftStepsBackwards = shiftStepsBackwards
         self.claimsSpaceKey = claimsSpaceKey
+        self.claimsDigitKeys = claimsDigitKeys
     }
 }
 
@@ -105,6 +113,15 @@ public enum TapOutcome: Equatable, Sendable {
 /// synthetic `CGEvent`s and a live tap in tests would require Accessibility, which
 /// CI cannot grant.
 public enum TapMatcher {
+
+    /// Virtual key codes for 1…9, in order.
+    ///
+    /// Position is the meaning: the index is the Desktop number. Listed
+    /// explicitly because the codes are not contiguous — 5 and 6 are swapped
+    /// relative to the rest.
+    public static let digitKeyCodesInOrder: [UInt16] = [
+        0x12, 0x13, 0x14, 0x15, 0x17, 0x16, 0x1A, 0x1C, 0x19,
+    ]
 
     /// Keys the switcher claims while its overlay is visible.
     public static let defaultOverlayKeyCodes: Set<UInt16> = {
@@ -172,6 +189,10 @@ public enum TapMatcher {
                 return .overlayKey(keyCode: keyCode, flags: flags, isKeyDown: true)
             }
 
+            if config.claimsDigitKeys, digitKeyCodes.contains(keyCode) {
+                return .overlayKey(keyCode: keyCode, flags: flags, isKeyDown: true)
+            }
+
             if config.overlayKeyCodes.contains(keyCode) {
                 return .overlayKey(keyCode: keyCode, flags: flags, isKeyDown: true)
             }
@@ -195,6 +216,7 @@ public enum TapMatcher {
             let isClaimed = config.shortcuts.contains { $0.keyCode == keyCode }
                 || config.overlayKeyCodes.contains(keyCode)
                 || (keyCode == spaceKeyCode && config.claimsSpaceKey)
+                || (config.claimsDigitKeys && digitKeyCodes.contains(keyCode))
             return isClaimed ? .overlayKey(keyCode: keyCode, flags: flags, isKeyDown: false) : .ignore
 
         default:
@@ -225,3 +247,5 @@ private let kVK_End = 0x77
 private let kVK_PageUp = 0x74
 private let kVK_PageDown = 0x79
 private let spaceKeyCode = UInt16(0x31)
+
+private let digitKeyCodes = Set(TapMatcher.digitKeyCodesInOrder)
