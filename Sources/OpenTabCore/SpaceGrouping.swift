@@ -47,11 +47,17 @@ public enum SpaceGrouping {
     /// Reorders `windows` so each Desktop's windows are contiguous, and describes
     /// where each one starts and ends.
     ///
-    /// The current Desktop comes first because it is the list the user was already
-    /// looking at when they asked to see the others; the rest follow in Desktop
-    /// order. Windows belonging to no Desktop — minimized and hidden ones, which
-    /// the window server places nowhere — join the current Desktop's column, which
-    /// is where they appear when the switcher is narrowed to one Desktop anyway.
+    /// Columns run in Desktop order, left to right: Desktop 1 leftmost, the
+    /// highest number rightmost, wherever the user happens to be standing. A
+    /// layout that reshuffled itself depending on the current Desktop would make
+    /// the numbers useless — the point of numbering them is that pressing 3 always
+    /// means the same place, and that only reads as true if 3 is also always in
+    /// the same place on screen. The current Desktop is marked in its heading
+    /// instead.
+    ///
+    /// Windows belonging to no Desktop — minimized and hidden ones, which the
+    /// window server places nowhere — join the current Desktop's column, which is
+    /// where they appear when the switcher is narrowed to one Desktop anyway.
     ///
     /// Order *within* a Desktop is untouched, so whatever sorting and grouping the
     /// list builder decided on still holds inside each column.
@@ -72,11 +78,9 @@ public enum SpaceGrouping {
             buckets[bucket, default: []].append(window)
         }
 
-        // Current Desktop first, then by Desktop number, then by raw ID for
-        // anything the numbering does not know about.
+        // Strictly by Desktop number. Anything the numbering does not recognise
+        // sorts last rather than first, where a zero would otherwise put it.
         let sortedKeys = order.sorted { lhs, rhs in
-            if lhs == currentSpaceID { return true }
-            if rhs == currentSpaceID { return false }
             let l = lhs.flatMap { numbering[$0] } ?? Int.max
             let r = rhs.flatMap { numbering[$0] } ?? Int.max
             if l != r { return l < r }

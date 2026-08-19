@@ -186,9 +186,11 @@ public struct SwitcherOverlayView: View {
 /// list answers neither — the user loses the boundary they were reasoning about,
 /// and the entries they were already looking at shift under them.
 ///
-/// The headings are numbered, and those numbers are the navigation: pressing 2
-/// jumps to Desktop 2. That only works if what is on screen says which number is
-/// which, so the labels are not decoration.
+/// Columns run in Desktop order, Desktop 1 leftmost, and do not rearrange
+/// themselves around whichever Desktop the user is on. The headings are numbered
+/// and those numbers are the navigation — pressing 2 jumps to Desktop 2 — which
+/// only reads as dependable if 2 is also always in the same place on screen. The
+/// current Desktop is marked in its heading instead of by position.
 struct SpaceColumnsView: View {
     let model: SwitcherViewModel
     let metrics: SwitcherMetrics

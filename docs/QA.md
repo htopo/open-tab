@@ -64,8 +64,9 @@ Displays:        ____________________
       selection already in place — the highlight must not be seen travelling there.
 - [ ] **Desktop columns.** With two or more Desktops in use and the switcher
       narrowed to the current one, hold space. The other Desktops appear as
-      separate columns to the right, each headed "Desktop N", with the current one
-      first and marked. The selection jumps to the top of the first other Desktop;
+      as columns in Desktop order — Desktop 1 leftmost, highest number rightmost —
+      each headed "Desktop N", with the current one marked in its heading. Standing
+      on a different Desktop must not rearrange them. The selection jumps to the top of the first other Desktop;
       releasing space returns it to the top of the original list.
 - [ ] **Simultaneous release.** Hold space, select a window on another Desktop,
       then let go of space and ⌘ together — space fractionally first. It must still

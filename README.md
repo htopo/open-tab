@@ -70,8 +70,9 @@ Hold **⌘** and press **Tab**.
 - Arrow keys navigate the grid; the mouse works too.
 - Picking a window on another Desktop takes you to that Desktop.
 - Narrowed the list to the current Desktop? Hold the **space bar** to see the
-  others: they appear as separate columns headed "Desktop 1", "Desktop 2", and
-  the selection jumps to the first of them. While they are up, press a **number**
+  others: they appear as columns in Desktop order, headed "Desktop 1",
+  "Desktop 2", and the selection jumps to the first Desktop that is not the one
+  you are on. While they are up, press a **number**
   to jump to that Desktop. Let go and you are back where you started. Both
   switches live under *Controls → Filtering*.
 - Release ⌘ to focus the highlighted window.
