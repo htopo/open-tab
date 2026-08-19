@@ -43,6 +43,15 @@ public final class WindowRegistry {
     private var focusedWindowID: WindowID?
     private var focusObservedAt: Date = .distantPast
 
+    /// Applications represented in the list, as of the last time it was logged.
+    ///
+    /// The list is assembled from two sources — the full enumeration and
+    /// per-application refreshes — and they have disagreed about what belongs in
+    /// it more than once, each time as an application the enumeration excluded and
+    /// a refresh added straight back. That is invisible in a log of either path
+    /// alone, which is why this logs what the *registry* ended up holding.
+    private var loggedApplications: Set<String> = []
+
     private var observers: [pid_t: AXAppObserver] = [:]
     private var workspaceObservers: [any NSObjectProtocol] = []
 
@@ -241,6 +250,7 @@ public final class WindowRegistry {
 
         windows = merged
         isPopulated = true
+        logApplicationsIfChanged()
         onChange?()
     }
 
@@ -312,12 +322,20 @@ public final class WindowRegistry {
                 )
             }
 
+            // The enumeration only ever treats `.regular` applications as having
+            // windows worth standing in for, or as being window-less. Menu-bar
+            // agents are neither: they are not switch targets and an "app with no
+            // open window" entry for one is noise. This path did not check, so a
+            // refresh could add back exactly what the enumeration had excluded —
+            // which is how Control Center kept reappearing in the list after being
+            // filtered out of every enumeration.
+            let isRegular = NSRunningApplication(processIdentifier: pid)?.activationPolicy == .regular
+
             // Same substitution the full enumeration makes, under the same rule:
             // only when the application published nothing at all. Without it a
             // refresh would quietly drop the windows it cannot see and undo the
             // recovery a moment after enumeration made it.
-            if refreshed.isEmpty,
-               NSRunningApplication(processIdentifier: pid)?.activationPolicy == .regular {
+            if refreshed.isEmpty, isRegular {
                 refreshed += WindowDiscovery.synthesizeMissingWindows(
                     for: app,
                     appElement: element,
@@ -342,7 +360,7 @@ public final class WindowRegistry {
                 return
             }
 
-            if refreshed.isEmpty, app.isActive || !app.bundleID.isEmpty {
+            if refreshed.isEmpty, isRegular {
                 refreshed = [WindowDiscovery.makeApplicationEntry(app: app, element: element)]
             }
 
@@ -350,6 +368,24 @@ public final class WindowRegistry {
                 self?.replaceWindows(ofPID: pid, with: refreshed, observedAt: observedAt)
             }
         }
+    }
+
+    /// Logs the cast of applications whenever it changes.
+    private func logApplicationsIfChanged() {
+        let present = Set(windows.map(\.appName))
+        guard present != loggedApplications else { return }
+
+        let added = present.subtracting(loggedApplications).sorted().joined(separator: ", ")
+        let removed = loggedApplications.subtracting(present).sorted().joined(separator: ", ")
+        loggedApplications = present
+
+        Log.registry.notice(
+            """
+            Applications in list (\(present.count)): \
+            \(present.sorted().joined(separator: ", "), privacy: .public) \
+            [added: \(added, privacy: .public)] [removed: \(removed, privacy: .public)]
+            """
+        )
     }
 
     /// Reconciles enumerated focus against what is actually known.
@@ -405,6 +441,7 @@ public final class WindowRegistry {
 
         guard updated != windows else { return }
         windows = updated
+        logApplicationsIfChanged()
         onChange?()
     }
 

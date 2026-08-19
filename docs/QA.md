@@ -42,6 +42,11 @@ Displays:        ____________________
       real window on a second Desktop. It must appear as a *window* — app name plus
       its title — never as an "app with no open window" entry. Check the log for
       `recovered N from the window server`.
+- [ ] **No background agents, after a refresh too.** Control Center, the Dock and
+      Notification Center must stay out of the list even after interacting with
+      them — click a menu-bar icon, trigger a notification, then ⌘Tab. A
+      per-application refresh used to add back exactly what the enumeration
+      excluded.
 - [ ] **No background agents.** Control Center, the Dock, Spotlight, notification
       panels and launcher overlays must not appear as entries. They publish
       accessibility windows they never put on screen; the window server has no

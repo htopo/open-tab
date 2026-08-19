@@ -290,6 +290,18 @@ public enum WindowDiscovery {
                     && record.bounds.height >= minimumWindowSize
             }
             .sorted { $0.windowID < $1.windowID }
+            // A window the user can reach is on a Desktop. These records are being
+            // trusted precisely because Accessibility said nothing about them, so
+            // there is no second opinion on whether they are real — and plenty of
+            // them are not: applications keep full-size window objects around that
+            // they never show, and those look identical here to a window parked on
+            // another Desktop. The difference is that the window server places the
+            // real one somewhere and the phantom nowhere.
+            //
+            // Safe as a filter only because it is used nowhere else: minimized
+            // windows also belong to no Desktop, but they come from Accessibility
+            // and have no window-server record at all, so they never reach this.
+            .filter { PrivateSymbols.workspace(for: $0.windowID) != nil }
             .map { record in
                 let id = WindowID(cgWindowID: record.windowID, pid: app.id)
                 let isFocusedOne = focusedID != nil && record.windowID == focusedID
@@ -311,6 +323,7 @@ public enum WindowDiscovery {
                     isMinimized: false,
                     isHidden: app.isHidden,
                     isFullscreen: false,
+                    // Non-nil by construction: the filter above required it.
                     spaceID: PrivateSymbols.workspace(for: record.windowID),
                     displayID: screens.displayContaining(record.bounds),
                     frame: record.bounds,
