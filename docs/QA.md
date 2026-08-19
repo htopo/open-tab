@@ -42,6 +42,13 @@ Displays:        ____________________
       real window on a second Desktop. It must appear as a *window* — app name plus
       its title — never as an "app with no open window" entry. Check the log for
       `recovered N from the window server`.
+- [ ] **No background agents.** Control Center, the Dock, Spotlight, notification
+      panels and launcher overlays must not appear as entries. They publish
+      accessibility windows they never put on screen; the window server has no
+      record of those, which is how they are told apart from real ones.
+- [ ] **Hidden and minimized still appear.** Minimize a window and hide an app
+      (⌘H). Both must remain in the list — they are the two legitimate cases of a
+      window with no window-server record, and the check above must not catch them.
 - [ ] **No phantom windows.** Count a browser's entries in the switcher against its
       real windows. The window server lists offscreen scratch windows and tab
       previews too; recovery must not put those in the list.

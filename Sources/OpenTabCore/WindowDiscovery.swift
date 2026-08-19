@@ -186,12 +186,25 @@ public enum WindowDiscovery {
         }
 
         let record = cgInfo[cgWindowID]
+        let isMinimized = AX.bool(element, AXAttribute.minimized) ?? false
 
-        // Drop window-server chrome. A minimized window has no CG record at all,
-        // which is expected and must not exclude it.
+        // Drop window-server chrome: menu-bar panels, the Dock, launcher overlays.
         if let record, record.layer != normalWindowLayer { return nil }
 
-        let isMinimized = AX.bool(element, AXAttribute.minimized) ?? false
+        // No record at all is a stronger signal than it looks. The window list is
+        // taken with `.optionAll`, which spans every Space and includes offscreen
+        // windows, so a window the server has never heard of is not a window the
+        // user can switch to — it is something an application has built out of
+        // accessibility objects without ever putting it on screen.
+        //
+        // Two exceptions, both real: a minimized window has no record while it
+        // sits in the Dock, and a hidden application's windows drop out of the
+        // list too. Both are things the switcher exists to reach.
+        //
+        // Without this check, background agents that publish accessibility
+        // windows they never show — the Dock, Control Center, launcher bars —
+        // appeared as ordinary entries.
+        if record == nil, !isMinimized, !app.isHidden { return nil }
 
         // Geometry: prefer the accessibility frame, fall back to the CG record.
         // A minimized window's AX frame is stale but is the best available.
