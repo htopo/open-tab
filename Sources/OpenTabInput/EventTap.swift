@@ -131,12 +131,36 @@ public final class EventTap {
 
     /// Tears the tap down and builds a new one.
     ///
-    /// Needed after wake from sleep and after display reconfiguration, both of
-    /// which can leave the tap alive but no longer receiving anything.
+    /// A last resort. Prefer `revalidate()`, which repairs the failure that
+    /// actually happens without a gap in coverage.
     public func reinstall() {
         Log.input.notice("Reinstalling event tap")
         uninstall()
         _ = install()
+    }
+
+    /// Checks the tap is still delivering, and re-enables it if not.
+    ///
+    /// The failure a tap suffers is being *disabled*, not destroyed — by an
+    /// overrun callback, by sleep, by the system deciding it has had enough.
+    /// Re-enabling is the documented repair and takes effect immediately.
+    ///
+    /// Rebuilding instead is worse than useless. Tearing the tap down and
+    /// standing a new one up takes a thread teardown, a new run loop and a new
+    /// mach port, and every keystroke in that gap is lost. This ran on
+    /// `didChangeScreenParametersNotification`, which macOS also posts when the
+    /// user switches Desktop — so moving to another Desktop and immediately
+    /// pressing ⌘Tab landed squarely in the gap, and the switcher appeared not to
+    /// exist there at all.
+    public func revalidate() {
+        guard let machPort else {
+            reinstall()
+            return
+        }
+        guard !CGEvent.tapIsEnabled(tap: machPort) else { return }
+
+        Log.input.notice("Event tap had been disabled; re-enabling")
+        CGEvent.tapEnable(tap: machPort, enable: true)
     }
 
     // MARK: - Tap thread
@@ -172,7 +196,7 @@ public final class EventTap {
                 forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
             ) { [weak self] _ in
                 // A tap can survive sleep as an object while no longer delivering.
-                self?.reinstall()
+                self?.revalidate()
             }
         )
 
@@ -182,7 +206,9 @@ public final class EventTap {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                self?.reinstall()
+                // Also posted on a Desktop switch, not only on real display
+                // changes — so this must be cheap and must not interrupt delivery.
+                self?.revalidate()
             }
         )
     }

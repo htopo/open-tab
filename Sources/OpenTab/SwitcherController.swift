@@ -71,6 +71,13 @@ final class SwitcherController {
     /// the overlay closes must not leak into the next one.
     private var isOtherSpacesRevealed = false
 
+    /// Suppresses the selection animation for one redraw.
+    ///
+    /// Set when the panel changes shape — the Desktop columns appearing or
+    /// disappearing — where an animated highlight has nothing meaningful to
+    /// travel between.
+    private var suppressesSelectionAnimation = false
+
     /// Desktop columns for the current list. Empty unless the space bar is held.
     private var spaceSections: [SpaceSection] = []
 
@@ -369,7 +376,11 @@ final class SwitcherController {
         // Newly revealed windows have no thumbnail yet, and the panel has to
         // resize for the extra columns.
         thumbnails.merge(capture.cachedThumbnails(for: currentList)) { existing, _ in existing }
+
+        suppressesSelectionAnimation = true
         refreshOverlayContent()
+        suppressesSelectionAnimation = false
+
         requestCaptures()
         updatePreviewHighlight()
         updateSpaceKeyClaim()
@@ -757,7 +768,8 @@ final class SwitcherController {
             windowCounts: windowCountsByApplication(),
             // Searching collapses back to one list: the columns describe Desktops,
             // and a filtered list is no longer a description of any Desktop.
-            spaceSections: searchQuery.isEmpty ? spaceSections : []
+            spaceSections: searchQuery.isEmpty ? spaceSections : [],
+            animatesSelection: !suppressesSelectionAnimation
         )
 
         panel.setContent(

@@ -49,6 +49,12 @@ Displays:        ____________________
       travels to that Desktop and the window is frontmost. (Requires Desktop &
       Dock → "When switching to an application, switch to a Space with open
       windows for the application", which is on by default.)
+- [ ] **Switching Desktop does not break the hotkey.** Move to another Desktop and
+      press ⌘Tab immediately. The switcher appears. macOS posts a screen-parameter
+      change on every Desktop switch; rebuilding the tap in response used to drop
+      the keystrokes that arrived during the rebuild.
+- [ ] **No animation on reveal.** Holding space swaps the panel to columns with the
+      selection already in place — the highlight must not be seen travelling there.
 - [ ] **Desktop columns.** With two or more Desktops in use and the switcher
       narrowed to the current one, hold space. The other Desktops appear as
       separate columns to the right, each headed "Desktop N", with the current one

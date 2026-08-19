@@ -29,6 +29,15 @@ public struct SwitcherViewModel: Equatable {
     /// user wants to read.
     public var spaceSections: [SpaceSection]
 
+    /// Whether this update may animate the selection moving.
+    ///
+    /// False when the layout itself changed — revealing or hiding the Desktop
+    /// columns. There the selection does not *move* between neighbours, it lands
+    /// somewhere else entirely while the panel changes shape around it, and
+    /// animating that reads as the highlight flying across the screen rather than
+    /// as a considered transition.
+    public var animatesSelection: Bool
+
     public init(
         windows: [WindowModel] = [],
         selection: Int = 0,
@@ -37,7 +46,8 @@ public struct SwitcherViewModel: Equatable {
         isSearching: Bool = false,
         thumbnails: [WindowID: NSImage] = [:],
         windowCounts: [pid_t: Int] = [:],
-        spaceSections: [SpaceSection] = []
+        spaceSections: [SpaceSection] = [],
+        animatesSelection: Bool = true
     ) {
         self.windows = windows
         self.selection = selection
@@ -47,6 +57,7 @@ public struct SwitcherViewModel: Equatable {
         self.thumbnails = thumbnails
         self.windowCounts = windowCounts
         self.spaceSections = spaceSections
+        self.animatesSelection = animatesSelection
     }
 
     public static func == (lhs: SwitcherViewModel, rhs: SwitcherViewModel) -> Bool {
@@ -90,7 +101,8 @@ public struct SwitcherOverlayView: View {
     /// holding the key down and cycling fast.
     private var selectionAnimation: Animation? {
         let animations = model.appearance.animations
-        guard animations.animateSelectionMove,
+        guard model.animatesSelection,
+              animations.animateSelectionMove,
               MotionPreference.shouldAnimate(userReduceAnimations: animations.reduceAnimations)
         else { return nil }
         return .easeOut(duration: 0.09)
