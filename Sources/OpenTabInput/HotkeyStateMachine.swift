@@ -128,6 +128,16 @@ public struct HotkeyStateMachine {
         }
     }
 
+    /// Moves the selection to a specific entry.
+    ///
+    /// For rebuilds that shift indices under the user without them navigating —
+    /// revealing the windows a Space filter was hiding, say. Clamped, and
+    /// ignored while idle.
+    public mutating func setSelection(_ index: Int) {
+        guard state != .idle else { return }
+        selection = clamp(index)
+    }
+
     /// Tells the machine how long the list is, so selection can be clamped and
     /// wrapped. Called whenever the list is rebuilt.
     public mutating func setCount(_ newCount: Int) {

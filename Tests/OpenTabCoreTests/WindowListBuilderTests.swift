@@ -378,6 +378,39 @@ struct FilteringTests {
         #expect(result.ids == [1])
     }
 
+    /// Holding the space bar widens the Space scope and nothing else. Modelled
+    /// here as the filter change the controller makes, so the peek is covered by
+    /// the same tests as the scopes it moves between.
+    @Test("Widening the Space scope brings the other Spaces back")
+    func revealingOtherSpacesWidensTheList() {
+        let windows = [
+            Fixture.window(1, space: 1),
+            Fixture.window(2, space: 2),
+        ]
+
+        var filter = FilterSettings(spaces: .activeSpace)
+        #expect(filter.canRevealOtherSpaces)
+
+        filter.spaces = .allSpaces
+        let revealed = WindowListBuilder.build(
+            windows: windows,
+            filter: filter,
+            ordering: OrderingSettings(activeWindowFirst: false),
+            context: FilterContext(activeSpaceID: 1)
+        )
+
+        #expect(revealed.ids == [1, 2])
+        // Nothing left to reveal once the list already spans every Space, which
+        // is why the space bar stays a typed character there.
+        #expect(!filter.canRevealOtherSpaces)
+    }
+
+    @Test("Turning the peek off leaves nothing for the space bar to do")
+    func peekCanBeDisabled() {
+        let filter = FilterSettings(spaces: .activeSpace, spaceKeyRevealsOtherSpaces: false)
+        #expect(!filter.canRevealOtherSpaces)
+    }
+
     @Test("Visible Spaces scope keeps every on-screen Space")
     func visibleSpacesScope() {
         let windows = [

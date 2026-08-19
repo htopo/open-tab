@@ -341,6 +341,15 @@ struct FilteringTab: View {
                 EnumPicker(selection: $filter.spaces,
                            options: SpaceScope.allCases.map { ($0, $0.displayName) })
             }
+            SettingsRow(
+                "controls.filter.spacePeek",
+                "Hold space to reveal other Spaces",
+                subtitle: FilterSettings.spacePeekExplanation
+            ) {
+                Toggle("", isOn: $filter.spaceKeyRevealsOtherSpaces)
+                    .labelsHidden()
+                    .disabled(filter.spaces == .allSpaces)
+            }
             SettingsRow("controls.filter.screens", "Show windows from screens") {
                 EnumPicker(selection: $filter.screens,
                            options: ScreenScope.allCases.map { ($0, $0.displayName) })

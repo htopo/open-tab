@@ -125,6 +125,69 @@ struct TapMatcherTests {
         #expect(!TapOutcome.stepBackward.swallowsEvent)
     }
 
+    // MARK: - Holding space to reveal other Spaces
+
+    private let spaceBar = UInt16(0x31)
+
+    private func spaceConfig(claims: Bool) -> TapConfiguration {
+        TapConfiguration(
+            shortcuts: [.commandTab],
+            isSwitcherActive: true,
+            activeModifiers: .command,
+            overlayKeyCodes: TapMatcher.defaultOverlayKeyCodes,
+            claimsSpaceKey: claims
+        )
+    }
+
+    @Test("Both edges of the space bar are reported when it is claimed")
+    func spaceBarReportsBothEdges() {
+        let down = TapMatcher.evaluate(
+            type: .keyDown, keyCode: spaceBar, flags: .maskCommand,
+            characters: " ", config: spaceConfig(claims: true)
+        )
+        #expect(down == .overlayKey(keyCode: spaceBar, flags: .maskCommand, isKeyDown: true))
+
+        let up = TapMatcher.evaluate(
+            type: .keyUp, keyCode: spaceBar, flags: .maskCommand,
+            characters: nil, config: spaceConfig(claims: true)
+        )
+        #expect(up == .overlayKey(keyCode: spaceBar, flags: .maskCommand, isKeyDown: false))
+    }
+
+    /// Nothing to reveal, or a search field to type into: the space bar is a
+    /// space bar and must reach whatever is listening.
+    @Test("An unclaimed space bar is left alone")
+    func unclaimedSpaceBarIsNotTaken() {
+        let outcome = TapMatcher.evaluate(
+            type: .keyDown, keyCode: spaceBar, flags: [],
+            characters: " ", config: spaceConfig(claims: false)
+        )
+        #expect(outcome == .typed(" "))
+
+        let up = TapMatcher.evaluate(
+            type: .keyUp, keyCode: spaceBar, flags: [],
+            characters: nil, config: spaceConfig(claims: false)
+        )
+        #expect(up == .ignore)
+    }
+
+    /// The release is claimed only so the application underneath does not see an
+    /// unbalanced key-up. Acting on it moved the selection twice per press.
+    @Test("Key-up is distinguishable from key-down")
+    func keyUpIsMarked() {
+        let down = TapMatcher.evaluate(
+            type: .keyDown, keyCode: rightArrow, flags: [],
+            characters: nil, config: config(active: true, modifiers: .command)
+        )
+        let up = TapMatcher.evaluate(
+            type: .keyUp, keyCode: rightArrow, flags: [],
+            characters: nil, config: config(active: true, modifiers: .command)
+        )
+        #expect(down == .overlayKey(keyCode: rightArrow, flags: [], isKeyDown: true))
+        #expect(up == .overlayKey(keyCode: rightArrow, flags: [], isKeyDown: false))
+        #expect(down != up)
+    }
+
     // MARK: - Triggering
 
     @Test("The bound combination fires its shortcut")
@@ -193,7 +256,7 @@ struct TapMatcherTests {
 
     @Test("Overlay keys and typed characters are swallowed")
     func overlayInputIsSwallowed() {
-        #expect(TapOutcome.overlayKey(keyCode: 0x35, flags: []).swallowsEvent)
+        #expect(TapOutcome.overlayKey(keyCode: 0x35, flags: [], isKeyDown: true).swallowsEvent)
         #expect(TapOutcome.typed("s").swallowsEvent)
     }
 
@@ -255,7 +318,7 @@ struct TapMatcherTests {
             type: .keyDown, keyCode: rightArrow, flags: [],
             characters: nil, config: config(active: true, modifiers: .command)
         )
-        #expect(outcome == .overlayKey(keyCode: rightArrow, flags: []))
+        #expect(outcome == .overlayKey(keyCode: rightArrow, flags: [], isKeyDown: true))
     }
 
     @Test("Escape is claimed while the overlay is open")
@@ -264,7 +327,7 @@ struct TapMatcherTests {
             type: .keyDown, keyCode: escape, flags: [],
             characters: nil, config: config(active: true, modifiers: .command)
         )
-        #expect(outcome == .overlayKey(keyCode: escape, flags: []))
+        #expect(outcome == .overlayKey(keyCode: escape, flags: [], isKeyDown: true))
     }
 
     @Test("Navigation keys are ignored when the overlay is closed")
@@ -292,7 +355,7 @@ struct TapMatcherTests {
             type: .keyDown, keyCode: letterS, flags: .maskCommand,
             characters: "s", config: config(active: true, modifiers: .command)
         )
-        #expect(outcome == .overlayKey(keyCode: letterS, flags: .maskCommand))
+        #expect(outcome == .overlayKey(keyCode: letterS, flags: .maskCommand, isKeyDown: true))
     }
 
     /// An unbalanced release would leave the focused app thinking a key is stuck.
@@ -302,7 +365,7 @@ struct TapMatcherTests {
             type: .keyUp, keyCode: tab, flags: .maskCommand,
             characters: nil, config: config(active: true, modifiers: .command)
         )
-        #expect(outcome == .overlayKey(keyCode: tab, flags: .maskCommand))
+        #expect(outcome == .overlayKey(keyCode: tab, flags: .maskCommand, isKeyDown: false))
     }
 
     @Test("Key-ups for unclaimed keys pass through")

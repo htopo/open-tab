@@ -25,6 +25,21 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ENTITLEMENTS="$ROOT/Resources/OpenTab.entitlements"
 
 OPENTAB_KEYCHAIN="opentab-signing.keychain"
+OPENTAB_KEYCHAIN_PASSWORD="opentab-local-signing"
+
+# macOS locks keychains when the machine sleeps, regardless of the "no timeout"
+# setting make-signing-cert.sh applies. codesign then fails with
+# `errSecInternalComponent` — an error that says nothing about keychains and
+# sends you looking at certificates, trust settings and entitlements instead.
+# So unlock first, every time. It is a no-op when already unlocked, and the
+# password is not a secret: it exists because the API demands one, and the
+# keychain holds nothing but a self-signed certificate that is worthless off
+# this machine.
+unlock_keychain() {
+    if security list-keychains -d user | grep -qF "$OPENTAB_KEYCHAIN"; then
+        security unlock-keychain -p "$OPENTAB_KEYCHAIN_PASSWORD" "$OPENTAB_KEYCHAIN" 2>/dev/null || true
+    fi
+}
 
 pick_identity() {
     if [[ -n "${OPENTAB_SIGN_IDENTITY:-}" ]]; then
@@ -58,6 +73,7 @@ pick_identity() {
     printf '%s' "$found"
 }
 
+unlock_keychain
 IDENTITY="$(pick_identity)"
 
 if [[ -z "$IDENTITY" ]]; then

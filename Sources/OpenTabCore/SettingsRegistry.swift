@@ -122,6 +122,8 @@ public enum SettingsRegistry {
               keywords: ["filter", "all apps", "active app", "current app", "only"]),
         .init(id: "controls.filter.spaces", title: "Show windows from Spaces", pane: .controls, section: "Filtering",
               keywords: ["filter", "space", "desktop", "mission control", "virtual desktop"]),
+        .init(id: "controls.filter.spacePeek", title: "Hold space to reveal other Spaces", pane: .controls, section: "Filtering",
+              keywords: ["space bar", "peek", "desktop", "reveal", "hold", "other spaces", "temporarily"]),
         .init(id: "controls.filter.screens", title: "Show windows from screens", pane: .controls, section: "Filtering",
               keywords: ["filter", "display", "monitor", "screen"]),
         .init(id: "controls.filter.minimized", title: "Show minimized windows", pane: .controls, section: "Filtering",

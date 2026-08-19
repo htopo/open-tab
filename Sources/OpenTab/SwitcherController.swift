@@ -56,6 +56,11 @@ final class SwitcherController {
 
     private var holdTimer: Timer?
 
+    /// True while the space bar is held and the list has been widened to every
+    /// Space. Reset at the end of every interaction — a held key at the moment
+    /// the overlay closes must not leak into the next one.
+    private var isOtherSpacesRevealed = false
+
     /// Reported once per launch when the takeover is impossible, rather than on
     /// every reconcile.
     private var hasWarnedAboutSymbolicHotkeys = false
@@ -267,8 +272,8 @@ final class SwitcherController {
         case .stepBackward:
             dispatch(.navigate(delta: -1))
 
-        case .overlayKey(let keyCode, let flags):
-            handleOverlayKey(keyCode: keyCode, flags: flags)
+        case .overlayKey(let keyCode, let flags, let isKeyDown):
+            handleOverlayKey(keyCode: keyCode, flags: flags, isKeyDown: isKeyDown)
 
         case .typed(let text):
             dispatch(.typed(text))
@@ -293,7 +298,69 @@ final class SwitcherController {
         dispatch(.triggerPressed(shortcut: index, reversed: reversed))
     }
 
-    private func handleOverlayKey(keyCode: UInt16, flags: CGEventFlags) {
+    /// Whether the space bar currently belongs to the switcher.
+    ///
+    /// Search mode is excluded: there a space is a space. Everywhere else it can
+    /// only be held-to-reveal, because the overlay has no text input to type into.
+    private var isSpaceKeyClaimed: Bool {
+        guard panel.isVisible,
+              let index = machine.state.shortcutIndex,
+              shortcuts.indices.contains(index),
+              shortcuts[index].filter.canRevealOtherSpaces
+        else { return false }
+        if case .searching = machine.state { return false }
+        return true
+    }
+
+    /// Widens the list to every Space while the space bar is held, and narrows it
+    /// again on release.
+    ///
+    /// The highlighted *window* is preserved rather than the highlighted index:
+    /// revealing inserts entries, so holding the index still would slide the
+    /// selection onto a different window under the user's eyes.
+    private func setOtherSpacesRevealed(_ revealed: Bool) {
+        guard isOtherSpacesRevealed != revealed else { return }
+        guard let index = machine.state.shortcutIndex,
+              shortcuts.indices.contains(index) else { return }
+
+        isOtherSpacesRevealed = revealed
+
+        let selectedID = currentList.indices.contains(machine.selection)
+            ? currentList[machine.selection].id
+            : nil
+
+        buildList(for: shortcuts[index])
+        dispatch(.listCountChanged(currentList.count))
+
+        if let selectedID, let restored = currentList.firstIndex(where: { $0.id == selectedID }) {
+            machine.setSelection(restored)
+        }
+
+        // Newly revealed windows have no thumbnail yet, and the panel has to
+        // resize for the longer list.
+        thumbnails.merge(capture.cachedThumbnails(for: currentList)) { existing, _ in existing }
+        refreshOverlayContent()
+        requestCaptures()
+        updatePreviewHighlight()
+
+        Log.overlay.notice(
+            "Other Spaces \(revealed ? "revealed" : "hidden", privacy: .public): \(self.currentList.count) entries"
+        )
+    }
+
+    private func handleOverlayKey(keyCode: UInt16, flags: CGEventFlags, isKeyDown: Bool) {
+        // Space is the one key with a meaning on both edges: hold to reveal the
+        // Spaces the filter is hiding, let go to hide them again.
+        if keyCode == kVKSpace, isSpaceKeyClaimed {
+            setOtherSpacesRevealed(isKeyDown)
+            return
+        }
+
+        // Everything else acts on the press. The release is claimed only so the
+        // application underneath does not see an unbalanced key-up; acting on it
+        // as well moved the selection two entries per arrow press.
+        guard isKeyDown else { return }
+
         // A user-configured action wins over the built-in navigation defaults, so
         // rebinding "select next" to something else actually takes effect.
         let modifiers = ModifierSet(eventFlags: flags)
@@ -425,6 +492,8 @@ final class SwitcherController {
 
         case .enterSearchMode:
             panel.becomeKeyForSearch()
+            // A space is a space once there is a field to type it into.
+            updateSpaceKeyClaim()
 
         case .updateSearchQuery(let query):
             applySearch(query)
@@ -454,10 +523,15 @@ final class SwitcherController {
             context: exceptionContext()
         )
 
+        // Holding space widens the Space scope for as long as it is held; nothing
+        // else about the shortcut's filtering changes.
+        var filter = shortcut.filter
+        if isOtherSpacesRevealed { filter.spaces = .allSpaces }
+
         unfilteredList = WindowListBuilder.build(
             windows: permitted,
             apps: snapshot.apps,
-            filter: shortcut.filter,
+            filter: filter,
             ordering: shortcut.ordering,
             context: snapshot.context
         )
@@ -506,6 +580,7 @@ final class SwitcherController {
         refreshOverlayContent()
         panel.show(on: targetScreen(), fadeDuration: fadeInDuration)
         gestures.setSwitcherOpen(true)
+        updateSpaceKeyClaim()
 
         updatePreviewHighlight()
         requestCaptures()
@@ -657,7 +732,14 @@ final class SwitcherController {
         tap?.updateConfiguration { config in
             config.isSwitcherActive = false
             config.activeModifiers = []
+            config.claimsSpaceKey = false
         }
+    }
+
+    /// Tells the tap whether to swallow the space bar right now.
+    private func updateSpaceKeyClaim() {
+        let claims = isSpaceKeyClaimed
+        tap?.updateConfiguration { config in config.claimsSpaceKey = claims }
     }
 
     /// Drops everything belonging to the finished interaction.
@@ -666,6 +748,7 @@ final class SwitcherController {
         unfilteredList = []
         searchQuery = ""
         thumbnails = [:]
+        isOtherSpacesRevealed = false
     }
 
     private func endInteraction() {
@@ -717,6 +800,7 @@ final class SwitcherController {
 
 // Carbon virtual key codes used for overlay navigation.
 private let kVKReturn = 0x24
+private let kVKSpace = UInt16(0x31)
 private let kVKTab = 0x30
 private let kVKEscape = 0x35
 private let kVKKeypadEnter = 0x4C

@@ -32,7 +32,19 @@ Displays:        ____________________
 - [ ] **No double step.** A single ⌘⇧Tab never moves two entries, under either
       setting.
 - [ ] **Arrow keys** navigate the grid in all four directions while the overlay is
-      open.
+      open, and move exactly **one** entry per press — not two.
+- [ ] **Another Desktop.** With windows on a second Desktop, pick one. macOS
+      travels to that Desktop and the window is frontmost. (Requires Desktop &
+      Dock → "When switching to an application, switch to a Space with open
+      windows for the application", which is on by default.)
+- [ ] **Space peek.** Set *Controls → Filtering → Show windows from Spaces* to
+      **Active Space**. The list now holds only this Desktop's windows. Hold the
+      space bar: the rest appear, and the highlight stays on the same window
+      rather than sliding to a different one. Let go: they disappear again.
+      Release ⌘ while holding space and the revealed window is the one focused.
+- [ ] **Space is still a space.** With *After keys are released* set to
+      **Search**, typing a space into the search field inserts a space instead of
+      revealing Spaces.
 - [ ] **Mouse hover** changes the selection; **click** commits it.
 - [ ] **Esc** dismisses the overlay and focuses nothing — the app you started from
       is still frontmost.

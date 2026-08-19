@@ -78,6 +78,17 @@ public struct FilterSettings: Codable, Equatable, Sendable {
     public var fullscreen: VisibilityPolicy
     public var appsWithNoWindows: VisibilityPolicy
 
+    /// Holding the space bar while the switcher is open widens the list to every
+    /// Space, for as long as it is held.
+    ///
+    /// A peek rather than a mode: narrowing to the current Space is the useful
+    /// default, but "where did that other window go" is a real question and
+    /// answering it should not mean closing the switcher and changing a setting.
+    /// Does nothing when `spaces` is already `.allSpaces` — there would be
+    /// nothing to reveal — which is also why the space bar is left alone as a
+    /// typed character in that case.
+    public var spaceKeyRevealsOtherSpaces: Bool
+
     public init(
         apps: AppScope = .allApps,
         spaces: SpaceScope = .allSpaces,
@@ -85,7 +96,8 @@ public struct FilterSettings: Codable, Equatable, Sendable {
         minimized: VisibilityPolicy = .show,
         hidden: VisibilityPolicy = .show,
         fullscreen: VisibilityPolicy = .show,
-        appsWithNoWindows: VisibilityPolicy = .showAtEnd
+        appsWithNoWindows: VisibilityPolicy = .showAtEnd,
+        spaceKeyRevealsOtherSpaces: Bool = true
     ) {
         self.apps = apps
         self.spaces = spaces
@@ -94,6 +106,7 @@ public struct FilterSettings: Codable, Equatable, Sendable {
         self.hidden = hidden
         self.fullscreen = fullscreen
         self.appsWithNoWindows = appsWithNoWindows
+        self.spaceKeyRevealsOtherSpaces = spaceKeyRevealsOtherSpaces
     }
 
     public init(from decoder: Decoder) throws {
@@ -106,9 +119,22 @@ public struct FilterSettings: Codable, Equatable, Sendable {
         hidden = c.value(.hidden, d.hidden)
         fullscreen = c.value(.fullscreen, d.fullscreen)
         appsWithNoWindows = c.value(.appsWithNoWindows, d.appsWithNoWindows)
+        spaceKeyRevealsOtherSpaces = c.value(.spaceKeyRevealsOtherSpaces, d.spaceKeyRevealsOtherSpaces)
     }
 
     public static let `default` = FilterSettings()
+
+    /// Whether holding space would actually change this list.
+    public var canRevealOtherSpaces: Bool {
+        spaceKeyRevealsOtherSpaces && spaces != .allSpaces
+    }
+
+    /// Shown under the "Hold space to reveal other Spaces" toggle.
+    public static let spacePeekExplanation = """
+        While the switcher is open, holding the space bar widens the list to \
+        every Space until you let go. Only applies when the list is narrowed \
+        above.
+        """
 }
 
 // MARK: - Context

@@ -22,13 +22,23 @@ public enum WindowActions {
     ///     would silently do nothing.
     ///  2. **Unhide the app.** Same problem one level up — a hidden app's windows
     ///     are not raisable.
-    ///  3. **Raise the window.** This is what selects *this* window rather than
-    ///     the app's frontmost one, and it is what triggers the Space switch when
-    ///     the target lives elsewhere.
-    ///  4. **Set the app frontmost.** Raising alone does not always bring the
+    ///  3. **Make it the app's main window.** This is the step that decides which
+    ///     Space macOS travels to. Activating an application sends you to the
+    ///     Space holding its *main* window, so without this a window on another
+    ///     Desktop is raised where it stands and the screen never moves — the app
+    ///     comes forward on the Space you were already on, or nothing visible
+    ///     happens at all.
+    ///  4. **Raise the window.** This is what selects *this* window rather than
+    ///     the app's frontmost one.
+    ///  5. **Set the app frontmost.** Raising alone does not always bring the
     ///     application forward.
-    ///  5. **Activate.** And activating alone does not reliably raise a *specific*
-    ///     window. Steps 3 and 4 are both required; neither is redundant.
+    ///  6. **Activate.** And activating alone does not reliably raise a *specific*
+    ///     window. Steps 4 and 5 are both required; neither is redundant.
+    ///
+    /// Travelling between Desktops also depends on a system setting — Desktop &
+    /// Dock → "When switching to an application, switch to a Space with open
+    /// windows for the application". It is on by default. With it off, macOS
+    /// deliberately stays put and no amount of asking will move it.
     @discardableResult
     public static func focus(_ window: WindowModel) -> Bool {
         guard let runningApp = NSRunningApplication(processIdentifier: window.id.pid) else {
@@ -57,6 +67,7 @@ public enum WindowActions {
             runningApp.unhide()
         }
 
+        let becameMain = AX.setBool(element, AXAttribute.main, true)
         let raised = AX.perform(element, AXAction.raise)
 
         let appElement = AXUIElementCreateApplication(window.id.pid)
@@ -67,8 +78,12 @@ public enum WindowActions {
         // deprecated as of macOS 14; the no-argument form is the supported path.
         let activated = runningApp.activate()
 
-        Log.accessibility.debug(
-            "Focus \(window.qualifiedTitle, privacy: .public): raised=\(raised) activated=\(activated)"
+        Log.accessibility.notice(
+            """
+            Focus \(window.qualifiedTitle, privacy: .public): \
+            main=\(becameMain) raised=\(raised) activated=\(activated) \
+            space=\(window.spaceID.map(String.init) ?? "unknown", privacy: .public)
+            """
         )
         return raised || activated
     }

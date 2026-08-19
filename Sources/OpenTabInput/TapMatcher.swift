@@ -33,13 +33,21 @@ public struct TapConfiguration: Equatable, Sendable {
     /// Whether tapping ⇧ steps backwards, instead of ⇧ reversing Tab.
     public var shiftStepsBackwards: Bool
 
+    /// Whether the space bar belongs to the switcher right now.
+    ///
+    /// Only true while the overlay is showing a Space-filtered list that holding
+    /// space would widen. Otherwise the key is left alone, so a space typed into
+    /// the search field is a space.
+    public var claimsSpaceKey: Bool
+
     public init(
         shortcuts: [KeyCombo] = [],
         isSwitcherActive: Bool = false,
         activeModifiers: ModifierSet = [],
         passThroughEverything: Bool = false,
         overlayKeyCodes: Set<UInt16> = [],
-        shiftStepsBackwards: Bool = true
+        shiftStepsBackwards: Bool = true,
+        claimsSpaceKey: Bool = false
     ) {
         self.shortcuts = shortcuts
         self.isSwitcherActive = isSwitcherActive
@@ -47,6 +55,7 @@ public struct TapConfiguration: Equatable, Sendable {
         self.passThroughEverything = passThroughEverything
         self.overlayKeyCodes = overlayKeyCodes
         self.shiftStepsBackwards = shiftStepsBackwards
+        self.claimsSpaceKey = claimsSpaceKey
     }
 }
 
@@ -60,8 +69,13 @@ public enum TapOutcome: Equatable, Sendable {
     case modifiersReleased
     /// ⇧ was pressed on its own while the switcher was open.
     case stepBackward
-    /// A key pressed while the overlay is on screen.
-    case overlayKey(keyCode: UInt16, flags: CGEventFlags)
+    /// A key pressed or released while the overlay is on screen.
+    ///
+    /// Both halves are reported. Most keys act on the press and ignore the
+    /// release — without `isKeyDown` to tell them apart, one arrow-key press
+    /// moved the selection twice. Holding space to reveal other Spaces needs
+    /// both.
+    case overlayKey(keyCode: UInt16, flags: CGEventFlags, isKeyDown: Bool)
     /// A printable character typed while the overlay is on screen.
     case typed(String)
 
@@ -154,8 +168,12 @@ public enum TapMatcher {
 
             guard config.isSwitcherActive else { return .ignore }
 
+            if keyCode == spaceKeyCode, config.claimsSpaceKey {
+                return .overlayKey(keyCode: keyCode, flags: flags, isKeyDown: true)
+            }
+
             if config.overlayKeyCodes.contains(keyCode) {
-                return .overlayKey(keyCode: keyCode, flags: flags)
+                return .overlayKey(keyCode: keyCode, flags: flags, isKeyDown: true)
             }
 
             // Printable characters start search filtering. Anything with ⌘ or ⌃
@@ -163,7 +181,7 @@ public enum TapMatcher {
             // so the action shortcuts (⌘W, ⌘M, …) can claim it.
             let modifiers = ModifierSet(eventFlags: flags)
             if modifiers.contains(.command) || modifiers.contains(.control) {
-                return .overlayKey(keyCode: keyCode, flags: flags)
+                return .overlayKey(keyCode: keyCode, flags: flags, isKeyDown: true)
             }
             if let characters, !characters.isEmpty, characters.allSatisfy(\.isPrintable) {
                 return .typed(characters)
@@ -176,7 +194,8 @@ public enum TapMatcher {
             guard config.isSwitcherActive else { return .ignore }
             let isClaimed = config.shortcuts.contains { $0.keyCode == keyCode }
                 || config.overlayKeyCodes.contains(keyCode)
-            return isClaimed ? .overlayKey(keyCode: keyCode, flags: flags) : .ignore
+                || (keyCode == spaceKeyCode && config.claimsSpaceKey)
+            return isClaimed ? .overlayKey(keyCode: keyCode, flags: flags, isKeyDown: false) : .ignore
 
         default:
             return .ignore
@@ -205,3 +224,4 @@ private let kVK_Home = 0x73
 private let kVK_End = 0x77
 private let kVK_PageUp = 0x74
 private let kVK_PageDown = 0x79
+private let spaceKeyCode = UInt16(0x31)
