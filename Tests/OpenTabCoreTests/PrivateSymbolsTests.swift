@@ -46,13 +46,31 @@ struct PrivateSymbolsTests {
         )
     }
 
-    @Test("CGSGetWindowWorkspace resolves")
+    @Test("A per-window Space query resolves")
     func windowSpaceQueryResolves() {
         #expect(
             PrivateSymbols.canQueryWindowSpace,
             """
-            CGSGetWindowWorkspace did not resolve. Per-window Space information is \
-            unavailable and Space filtering degrades to "all". See PLAN §6.3.
+            Neither CGSCopySpacesForWindows nor CGSGetWindowWorkspace resolved. \
+            Per-window Space information is unavailable and Space filtering \
+            degrades to "all". See PLAN §6.3.
+            """
+        )
+    }
+
+    /// Resolution is not the same as working. `CGSGetWindowWorkspace` still
+    /// resolves on current macOS but answers 0 for every window, which reads as
+    /// "unknown" — Space filtering then matched everything and looked broken
+    /// rather than degraded. This asserts the symbol that actually answers is the
+    /// one present, so losing it shows up here rather than as a silent no-op.
+    @Test("The modern Space query is the one in use")
+    func modernSpaceQueryIsPresent() {
+        #expect(
+            PrivateSymbols.describe().contains("CGSCopySpacesForWindows=true"),
+            """
+            CGSCopySpacesForWindows did not resolve. The fallback still runs but \
+            reports no Space for any window on macOS 14 and later, so per-Space \
+            filtering will silently include everything.
             """
         )
     }

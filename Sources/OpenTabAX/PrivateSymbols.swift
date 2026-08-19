@@ -64,6 +64,9 @@ public enum PrivateSymbols {
     private typealias CGSGetWindowWorkspaceFn =
         @convention(c) (Int32, CGWindowID, UnsafeMutablePointer<Int32>) -> CGError
 
+    private typealias CGSCopySpacesForWindowsFn =
+        @convention(c) (Int32, UInt32, CFArray) -> Unmanaged<CFArray>?
+
     private typealias CGSCopyWindowsWithOptionsAndTagsFn =
         @convention(c) (Int32, UInt32, CFArray?, UInt32,
                         UnsafeMutablePointer<UInt64>, UnsafeMutablePointer<UInt64>) -> Unmanaged<CFArray>?
@@ -84,6 +87,9 @@ public enum PrivateSymbols {
 
     private static let getWindowWorkspaceSym = lookup("CGSGetWindowWorkspace", in: [skyLightHandle])
         .map { unsafeBitCast($0, to: CGSGetWindowWorkspaceFn.self) }
+
+    private static let copySpacesForWindowsSym = lookup("CGSCopySpacesForWindows", in: [skyLightHandle])
+        .map { unsafeBitCast($0, to: CGSCopySpacesForWindowsFn.self) }
 
     private static let copyWindowsWithOptionsAndTagsSym = lookup("CGSCopyWindowsWithOptionsAndTags", in: [skyLightHandle])
         .map { unsafeBitCast($0, to: CGSCopyWindowsWithOptionsAndTagsFn.self) }
@@ -108,7 +114,7 @@ public enum PrivateSymbols {
     /// Whether the Space a window lives on can be determined.
     /// When false, `spaceID` is nil everywhere and Space filtering degrades to "all".
     public static var canQueryWindowSpace: Bool {
-        getWindowWorkspaceSym != nil && mainConnectionSym != nil
+        (copySpacesForWindowsSym != nil || getWindowWorkspaceSym != nil) && mainConnectionSym != nil
     }
 
     /// Whether windows across every Space can be enumerated.
@@ -158,12 +164,44 @@ public enum PrivateSymbols {
     ///
     /// A return of 0 means "no Space" — typically a window that is minimized or
     /// belongs to a hidden app — and is reported as nil.
+    /// Which Space a window lives on, or nil if it cannot be determined.
+    ///
+    /// Two implementations, tried in order, because the older one has stopped
+    /// working. `CGSGetWindowWorkspace` dates from the original Spaces and still
+    /// resolves — so an availability check passes — but on current macOS it
+    /// reports workspace 0 for every window. That is indistinguishable from
+    /// "unknown", so Space filtering silently matched everything and holding
+    /// space to reveal other Spaces revealed nothing: the list was already the
+    /// whole list.
+    ///
+    /// `CGSCopySpacesForWindows` is the modern replacement. It answers for a
+    /// batch of windows at once but returns the *union* of their Spaces rather
+    /// than a per-window mapping, so it is asked about one window at a time. That
+    /// is a WindowServer round trip per window, which is why this is only ever
+    /// called from the background enumeration and never while the switcher is
+    /// open.
     public static func workspace(for windowID: CGWindowID) -> Int? {
-        guard let fn = getWindowWorkspaceSym, let cid = mainConnectionID else { return nil }
+        guard let cid = mainConnectionID else { return nil }
+
+        if let fn = copySpacesForWindowsSym {
+            let ids = [NSNumber(value: windowID)] as CFArray
+            if let spaces = fn(cid, allSpacesMask, ids)?.takeRetainedValue() as? [NSNumber],
+               let first = spaces.first?.intValue,
+               first != 0 {
+                return first
+            }
+        }
+
+        guard let fn = getWindowWorkspaceSym else { return nil }
         var workspace: Int32 = 0
         guard fn(cid, windowID, &workspace) == .success, workspace != 0 else { return nil }
         return Int(workspace)
     }
+
+    /// `kCGSSpaceIncludesCurrent | kCGSSpaceIncludesOthers | kCGSSpaceIncludesUser`
+    /// — every Space the user can reach, which is the only mask that answers
+    /// "where is this window" rather than "is it here".
+    private static let allSpacesMask: UInt32 = 7
 
     /// Enumerates window IDs across every Space.
     ///
@@ -219,7 +257,8 @@ public enum PrivateSymbols {
         _AXUIElementGetWindow=\(r.elementToWindowID) \
         CGSSetSymbolicHotKeyEnabled=\(r.symbolicHotKeyControl) \
         CGSIsSymbolicHotKeyEnabled=\(r.symbolicHotKeyRead) \
-        CGSGetWindowWorkspace=\(r.windowSpaceQuery) \
+        CGSCopySpacesForWindows=\(copySpacesForWindowsSym != nil) \
+        CGSGetWindowWorkspace=\(getWindowWorkspaceSym != nil) \
         CGSCopyWindowsWithOptionsAndTags=\(r.allSpacesEnumeration)
         """
     }

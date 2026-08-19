@@ -56,6 +56,16 @@ final class SwitcherController {
 
     private var holdTimer: Timer?
 
+    /// Where the pointer was when the overlay opened, until it has moved.
+    ///
+    /// SwiftUI reports a hover the moment a view appears under the cursor, with
+    /// no movement involved. The overlay appears centred on screen, which is very
+    /// often exactly where the pointer is resting — so opening the switcher
+    /// selected whatever entry happened to land under it, and releasing ⌘ focused
+    /// a window the user never chose. Hover only counts once the pointer has
+    /// actually moved.
+    private var pointerAnchor: NSPoint?
+
     /// True while the space bar is held and the list has been widened to every
     /// Space. Reset at the end of every interaction — a held key at the moment
     /// the overlay closes must not leak into the next one.
@@ -555,6 +565,20 @@ final class SwitcherController {
         refreshOverlayContent()
     }
 
+    /// Routes a hover, once the pointer has earned the right to be listened to.
+    private func handleHover(index: Int) {
+        if let anchor = pointerAnchor {
+            let now = NSEvent.mouseLocation
+            let dx = now.x - anchor.x
+            let dy = now.y - anchor.y
+            // A few points of slack: a hand resting on the trackpad emits tiny
+            // movements that are not a choice.
+            guard (dx * dx + dy * dy) > 16 else { return }
+            pointerAnchor = nil
+        }
+        dispatch(.hovered(index: index))
+    }
+
     private func updateSelection(_ index: Int) {
         guard panel.isVisible else { return }
         refreshOverlayContent()
@@ -576,6 +600,8 @@ final class SwitcherController {
         // Seed from cache so the very first frame has images. Anything missing
         // draws as an app icon and is replaced when its capture lands.
         thumbnails = capture.cachedThumbnails(for: currentList)
+
+        pointerAnchor = NSEvent.mouseLocation
 
         refreshOverlayContent()
         panel.show(on: targetScreen(), fadeDuration: fadeInDuration)
@@ -653,10 +679,14 @@ final class SwitcherController {
         panel.setContent(
             SwitcherOverlayView(
                 model: model,
-                onHover: { [weak self] index in self?.dispatch(.hovered(index: index)) },
+                onHover: { [weak self] index in self?.handleHover(index: index) },
                 onClick: { [weak self] index in
-                    self?.dispatch(.hovered(index: index))
-                    self?.dispatch(.committed)
+                    guard let self else { return }
+                    // Not `.hovered`, which the state machine drops when hover
+                    // selection is off. A click is unambiguous: it commits what
+                    // was clicked, whatever the pointer is otherwise allowed to do.
+                    self.machine.setSelection(index)
+                    self.dispatch(.committed)
                 },
                 onSearchChange: { [weak self] query in self?.dispatch(.searchChanged(query)) }
             )
@@ -749,6 +779,7 @@ final class SwitcherController {
         searchQuery = ""
         thumbnails = [:]
         isOtherSpacesRevealed = false
+        pointerAnchor = nil
     }
 
     private func endInteraction() {

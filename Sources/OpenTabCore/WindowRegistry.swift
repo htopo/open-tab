@@ -124,16 +124,34 @@ public final class WindowRegistry {
         let activePID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let focused = windows.first { $0.isFocused }
 
-        // Spaces holding at least one non-minimized window are the ones currently
-        // showing on some display.
+        // Which Spaces are on screen right now.
+        //
+        // `.optionOnScreenOnly` is the public API for exactly this question: it
+        // lists the windows the user can currently see, which across displays is
+        // one Space each. Deriving it instead from "windows that are not
+        // minimized" — the obvious reading — is wrong, because a window sitting
+        // on another Desktop is not minimized either. That made every Space look
+        // visible and reduced the Visible Spaces scope to All Spaces.
+        let onScreenIDs = Set(
+            (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                as? [[String: Any]] ?? [])
+                .compactMap { $0[kCGWindowNumber as String] as? CGWindowID }
+        )
+
         let visible = Set(windows.compactMap { window -> Int? in
-            guard !window.isMinimized, !window.isHidden else { return nil }
+            guard onScreenIDs.contains(window.id.cgWindowID) else { return nil }
             return window.spaceID
         })
 
+        // The focused window is the best answer, but there is not always one —
+        // clicking the desktop, or a focused app OpenTab filtered out. Falling
+        // back to any visible Space keeps "Active Space" filtering meaningful
+        // instead of quietly matching everything.
+        let activeSpace = focused?.spaceID ?? visible.first
+
         return FilterContext(
             activePID: activePID,
-            activeSpaceID: focused?.spaceID,
+            activeSpaceID: activeSpace,
             visibleSpaceIDs: visible,
             activeDisplayID: focused?.displayID
         )
@@ -156,8 +174,18 @@ public final class WindowRegistry {
 
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                // The Space tally is here because "how many windows have a
+                // known Space" is the one number that distinguishes working
+                // Space filtering from silently-matching-everything, and the
+                // symbol that answers it has stopped working once already.
+                let spaces = Set(result.windows.compactMap(\.spaceID))
                 Log.registry.notice(
-                    "Full enumeration: \(result.windows.count) windows, \(result.apps.count) apps, \(elapsedMS, format: .fixed(precision: 1))ms"
+                    """
+                    Full enumeration: \(result.windows.count) windows, \(result.apps.count) apps, \
+                    \(elapsedMS, format: .fixed(precision: 1))ms, \
+                    \(result.windows.filter { $0.spaceID != nil }.count) with a known Space \
+                    across \(spaces.count)
+                    """
                 )
                 self.applyFullResult(result)
             }
