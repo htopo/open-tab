@@ -60,6 +60,10 @@ Displays:        ____________________
       separate columns to the right, each headed "Desktop N", with the current one
       first and marked. The selection jumps to the top of the first other Desktop;
       releasing space returns it to the top of the original list.
+- [ ] **Simultaneous release.** Hold space, select a window on another Desktop,
+      then let go of space and ⌘ together — space fractionally first. It must still
+      switch to the selected window, not to whatever was at the top of the current
+      Desktop's list.
 - [ ] **Desktop digits.** While space is held, press 2, 3, … The selection jumps
       to the top of that Desktop's column. A number with no column does nothing.
       With the columns down, digits type into the search field as normal.

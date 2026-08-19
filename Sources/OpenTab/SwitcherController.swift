@@ -71,6 +71,23 @@ final class SwitcherController {
     /// the overlay closes must not leak into the next one.
     private var isOtherSpacesRevealed = false
 
+    /// Pending collapse back to one Desktop after the space bar came up.
+    ///
+    /// See `setOtherSpacesRevealed`.
+    private var collapseTimer: Timer?
+
+    /// How long a release of the space bar waits before narrowing the list again.
+    ///
+    /// Releasing ⌘ and the space bar together is one gesture to the user, but the
+    /// keyboard reports two events in whatever order the fingers happened to
+    /// leave. Space first meant the list narrowed and the selection jumped home a
+    /// few milliseconds before ⌘ committed it — so letting go of both at once
+    /// switched to the wrong window, and the only way to reach another Desktop
+    /// was to release ⌘ first and hold space a moment longer. Two hundred
+    /// milliseconds is far longer than any real gap between two fingers lifting
+    /// and short enough that a deliberate release still feels immediate.
+    private static let collapseGrace: TimeInterval = 0.2
+
     /// Suppresses the selection animation for one redraw.
     ///
     /// Set when the panel changes shape — the Desktop columns appearing or
@@ -166,6 +183,8 @@ final class SwitcherController {
     func stop() {
         holdTimer?.invalidate()
         holdTimer = nil
+        collapseTimer?.invalidate()
+        collapseTimer = nil
         panel.hide()
         highlighter.tearDown()
         gestures.stop()
@@ -354,6 +373,31 @@ final class SwitcherController {
     /// revealing inserts entries, so holding the index still would slide the
     /// selection onto a different window under the user's eyes.
     private func setOtherSpacesRevealed(_ revealed: Bool) {
+        // Any pending collapse is settled by whatever happens next: pressing
+        // space again cancels it, and the timer firing performs it.
+        collapseTimer?.invalidate()
+        collapseTimer = nil
+
+        guard isOtherSpacesRevealed != revealed else { return }
+
+        // Narrowing waits. Widening does not — the user is asking to see
+        // something and has to see it at once.
+        guard revealed else {
+            let timer = Timer.scheduledTimer(withTimeInterval: Self.collapseGrace, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated { self?.applyOtherSpacesRevealed(false) }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            collapseTimer = timer
+            return
+        }
+
+        applyOtherSpacesRevealed(true)
+    }
+
+    private func applyOtherSpacesRevealed(_ revealed: Bool) {
+        collapseTimer?.invalidate()
+        collapseTimer = nil
+
         guard isOtherSpacesRevealed != revealed else { return }
         guard let index = machine.state.shortcutIndex,
               shortcuts.indices.contains(index) else { return }
@@ -851,6 +895,8 @@ final class SwitcherController {
     private func hideOverlayUI() {
         holdTimer?.invalidate()
         holdTimer = nil
+        collapseTimer?.invalidate()
+        collapseTimer = nil
         panel.hide(fadeDuration: fadeOutDuration)
         highlighter.hide()
         gestures.setSwitcherOpen(false)
