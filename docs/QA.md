@@ -38,6 +38,13 @@ Displays:        ____________________
       setting.
 - [ ] **Arrow keys** navigate the grid in all four directions while the overlay is
       open, and move exactly **one** entry per press — not two.
+- [ ] **Apps that hide from Accessibility.** Put a Catalyst or Electron app with a
+      real window on a second Desktop. It must appear as a *window* — app name plus
+      its title — never as an "app with no open window" entry. Check the log for
+      `recovered N from the window server`.
+- [ ] **No phantom windows.** Count a browser's entries in the switcher against its
+      real windows. The window server lists offscreen scratch windows and tab
+      previews too; recovery must not put those in the list.
 - [ ] **Another Desktop.** With windows on a second Desktop, pick one. macOS
       travels to that Desktop and the window is frontmost. (Requires Desktop &
       Dock → "When switching to an application, switch to a Space with open

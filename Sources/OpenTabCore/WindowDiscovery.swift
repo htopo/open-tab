@@ -19,11 +19,11 @@ public enum WindowDiscovery {
 
     /// A window layer other than 0 means the window is chrome — a menu, the Dock,
     /// a system overlay, a notification. Those are never switch targets.
-    private static let normalWindowLayer = 0
+    static let normalWindowLayer = 0
 
     /// Windows smaller than this in either dimension are almost always utility
     /// shims rather than something a user would switch to.
-    private static let minimumWindowSize: CGFloat = 40
+    static let minimumWindowSize: CGFloat = 40
 
     // MARK: - Entry point
 
@@ -71,18 +71,12 @@ public enum WindowDiscovery {
 
             let windowElements = AX.elements(appElement, AXAttribute.windows)
 
-            // An app that reports no windows still belongs in the list when the
-            // "apps with no open window" filter asks for it.
-            if windowElements.isEmpty {
-                if runningApp.activationPolicy == .regular {
-                    windows.append(makeApplicationEntry(app: appModel, element: appElement))
-                }
-                continue
-            }
+            let isRegular = runningApp.activationPolicy == .regular
 
             let focusedElement = AX.element(appElement, AXAttribute.focusedWindow)
             let focusedWindowID = focusedElement.flatMap { AX.windowID(of: $0) }
 
+            var modelled = 0
             for element in windowElements {
                 guard let model = makeWindowModel(
                     element: element,
@@ -93,7 +87,38 @@ public enum WindowDiscovery {
                     previousFocusTimes: previousFocusTimes
                 ) else { continue }
                 windows.append(model)
+                modelled += 1
             }
+
+            guard modelled == 0, isRegular else { continue }
+
+            // Accessibility produced nothing usable for this app — it either
+            // published no windows at all, or published only things that are not
+            // switch targets. Ask the window server before concluding the app has
+            // no windows: it sees every Space and does not need the app's
+            // cooperation.
+            let recovered = synthesizeMissingWindows(
+                for: appModel,
+                alreadyModelled: [],
+                cgInfo: cgInfo,
+                screens: screens,
+                previousFocusTimes: previousFocusTimes
+            )
+
+            guard !recovered.isEmpty else {
+                // Genuinely window-less. This is the entry the "apps with no open
+                // window" filter is about.
+                windows.append(makeApplicationEntry(app: appModel, element: appElement))
+                continue
+            }
+
+            Log.registry.notice(
+                """
+                \(appModel.name, privacy: .public): \(windowElements.count) window(s) offered by \
+                Accessibility, none usable; recovered \(recovered.count) from the window server
+                """
+            )
+            windows.append(contentsOf: recovered)
         }
 
         return Result(windows: windows, apps: apps)
@@ -190,6 +215,93 @@ public enum WindowDiscovery {
             lastFocusedAt: previousFocusTimes[id] ?? (isFocused ? Date() : .distantPast),
             isFocused: isFocused
         )
+    }
+
+    /// Windows the window server knows about that Accessibility never offered.
+    ///
+    /// Some applications simply do not publish their windows over the
+    /// accessibility API — Catalyst apps are the usual culprits, and a chat app
+    /// parked on another Desktop was the report that led here. It appeared in the
+    /// switcher as "an application with no open window", which was wrong twice
+    /// over: it had a window, and that window was on a Desktop the entry gave no
+    /// hint about.
+    ///
+    /// The window server is not so reticent. `.optionAll` covers every Space and
+    /// needs no cooperation from the application, so its records can stand in.
+    ///
+    /// Used **only** when Accessibility published nothing at all for the app, and
+    /// only for `.regular` applications. Both limits are load-bearing. The window
+    /// server's list is not a list of switchable windows: it also holds offscreen
+    /// scratch windows, tab previews, panels and system furniture. Filling in the
+    /// gaps for an app that published *some* windows took a browser from three
+    /// entries to ten, most of them things the user has never seen. An app that
+    /// published none is the unambiguous case — there is nothing to contradict,
+    /// and the alternative is the app being absent or, worse, listed as having no
+    /// windows when it plainly has one.
+    ///
+    /// These models carry no `AXUIElement`, so they cannot be raised window by
+    /// window; `WindowActions.focus` brings the application forward instead,
+    /// which is the same thing the old placeholder entry did, only now under the
+    /// right name and on the right Desktop.
+    static func synthesizeMissingWindows(
+        for app: AppModel,
+        alreadyModelled: Set<CGWindowID>,
+        cgInfo: [CGWindowID: CGWindowRecord],
+        screens: ScreenGeometry,
+        previousFocusTimes: [WindowID: Date]
+    ) -> [WindowModel] {
+        cgInfo.values
+            .filter { record in
+                record.pid == app.id
+                    && !alreadyModelled.contains(record.windowID)
+                    && record.layer == normalWindowLayer
+                    && record.bounds.width >= minimumWindowSize
+                    && record.bounds.height >= minimumWindowSize
+            }
+            .sorted { $0.windowID < $1.windowID }
+            .map { record in
+                let id = WindowID(cgWindowID: record.windowID, pid: app.id)
+                return WindowModel(
+                    id: id,
+                    kind: .window,
+                    axElement: nil,
+                    title: record.title ?? "",
+                    appBundleID: app.bundleID,
+                    appName: app.name,
+                    appIcon: app.icon,
+                    isMinimized: false,
+                    isHidden: app.isHidden,
+                    isFullscreen: false,
+                    spaceID: PrivateSymbols.workspace(for: record.windowID),
+                    displayID: screens.displayContaining(record.bounds),
+                    frame: record.bounds,
+                    lastFocusedAt: previousFocusTimes[id] ?? .distantPast,
+                    isFocused: false
+                )
+            }
+    }
+
+    /// Whether the window server believes this process owns an ordinary window.
+    ///
+    /// A second opinion, asked before declaring an application window-less.
+    /// Accessibility answers an empty window list for more reasons than "there
+    /// are no windows": a messaging timeout, an app busy enough not to reply, or
+    /// an app that simply does not enumerate windows sitting on another Desktop.
+    /// All three are indistinguishable from the real thing, and the result was an
+    /// app with a perfectly good window on Desktop 2 appearing in the list as
+    /// having none.
+    ///
+    /// CoreGraphics is asked with `.optionAll`, so it sees every Space, and it
+    /// does not depend on the application cooperating. Minimized windows have no
+    /// record at all — that is fine here, because Accessibility does report those,
+    /// so this path is never reached for them.
+    static func ownsWindows(pid: pid_t, in cgInfo: [CGWindowID: CGWindowRecord]) -> Bool {
+        cgInfo.values.contains { record in
+            record.pid == pid
+                && record.layer == normalWindowLayer
+                && record.bounds.width >= minimumWindowSize
+                && record.bounds.height >= minimumWindowSize
+        }
     }
 
     static func makeApplicationEntry(app: AppModel, element: AXUIElement) -> WindowModel {

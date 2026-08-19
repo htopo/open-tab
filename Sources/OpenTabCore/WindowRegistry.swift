@@ -312,6 +312,35 @@ public final class WindowRegistry {
                 )
             }
 
+            // Same substitution the full enumeration makes, under the same rule:
+            // only when the application published nothing at all. Without it a
+            // refresh would quietly drop the windows it cannot see and undo the
+            // recovery a moment after enumeration made it.
+            if refreshed.isEmpty,
+               NSRunningApplication(processIdentifier: pid)?.activationPolicy == .regular {
+                refreshed += WindowDiscovery.synthesizeMissingWindows(
+                    for: app,
+                    alreadyModelled: Set(refreshed.map(\.id.cgWindowID)),
+                    cgInfo: cgInfo,
+                    screens: screens,
+                    previousFocusTimes: carriedFocusTimes
+                )
+            }
+
+            // Still nothing, and the window server disagrees: this refresh failed
+            // to see windows that exist rather than finding none. Publishing an
+            // "app with no open window" entry would replace correct models with a
+            // lie, so leave the list alone and wait for the next pass.
+            if refreshed.isEmpty, WindowDiscovery.ownsWindows(pid: pid, in: cgInfo) {
+                Log.registry.notice(
+                    """
+                    Refresh of \(app.name, privacy: .public) found no windows but the window \
+                    server lists some; keeping the previous list
+                    """
+                )
+                return
+            }
+
             if refreshed.isEmpty, app.isActive || !app.bundleID.isEmpty {
                 refreshed = [WindowDiscovery.makeApplicationEntry(app: app, element: element)]
             }

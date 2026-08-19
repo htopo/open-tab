@@ -54,9 +54,20 @@ public enum WindowActions {
             return activated
         }
 
+        // Recovered from the window server because the application publishes
+        // nothing over Accessibility. There is no element to raise, so the best
+        // available action is bringing the app forward — which, for an app like
+        // this, is also the only thing that was ever possible.
         guard let element = window.axElement else {
-            Log.accessibility.error("Cannot focus \(window.appName, privacy: .public): no accessibility element")
-            return false
+            if runningApp.isHidden { runningApp.unhide() }
+            let activated = runningApp.activate()
+            Log.accessibility.notice(
+                """
+                Focus \(window.qualifiedTitle, privacy: .public) by activating the app: \
+                activated=\(activated) (no accessibility element)
+                """
+            )
+            return activated
         }
 
         if window.isMinimized {
