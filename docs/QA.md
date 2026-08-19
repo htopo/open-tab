@@ -51,6 +51,10 @@ Displays:        ____________________
       **Search**, typing a space into the search field inserts a space instead of
       revealing Spaces.
 - [ ] **Mouse hover** changes the selection; **click** commits it.
+- [ ] **Scroll damping.** With the overlay open, flick two fingers across the
+      trackpad once and lift them. The selection moves a step or two and then
+      *stops*. It must not keep travelling while the momentum coasts — check the
+      log for a burst of `Navigate by scroll` lines after your fingers left.
 - [ ] **Esc** dismisses the overlay and focuses nothing — the app you started from
       is still frontmost.
 - [ ] **Click away** dismisses the overlay without focusing anything.

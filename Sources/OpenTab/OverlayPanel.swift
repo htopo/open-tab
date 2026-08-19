@@ -204,6 +204,23 @@ final class OverlayPanel {
     /// the selection flying across the list. Accumulating to a threshold makes one
     /// deliberate two-finger swipe move one entry.
     private func handleScroll(_ event: NSEvent) {
+        // Momentum is not input. After a trackpad flick macOS keeps sending
+        // scroll events for a second or more as the imaginary surface coasts to a
+        // stop, and they arrive here exactly like real ones. Feeding them to the
+        // accumulator turned one brush of the trackpad into dozens of steps —
+        // the selection visibly sliding away to the far end of the list on its
+        // own, with the user's fingers already lifted.
+        guard event.momentumPhase == [] else {
+            accumulatedScroll = 0
+            return
+        }
+
+        // Each gesture starts from zero, so leftovers from the previous one
+        // cannot combine with a new nudge to produce a step nobody asked for.
+        if event.phase == .began {
+            accumulatedScroll = 0
+        }
+
         // Horizontal dominant means the user is moving along the row; vertical is
         // handled the same way so a grid works either direction.
         let delta = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
@@ -212,12 +229,15 @@ final class OverlayPanel {
 
         accumulatedScroll += delta
 
-        let threshold: CGFloat = 12
-        while abs(accumulatedScroll) >= threshold {
-            let step = accumulatedScroll > 0 ? -1 : 1
-            accumulatedScroll -= CGFloat(step == 1 ? -threshold : threshold)
-            onScroll?(step)
-        }
+        // One step per event at most. A fast swipe can carry fifty points in a
+        // single event, and draining that in a loop moves several entries from
+        // one gesture — the same runaway in miniature.
+        let threshold: CGFloat = 30
+        guard abs(accumulatedScroll) >= threshold else { return }
+
+        let step = accumulatedScroll > 0 ? -1 : 1
+        accumulatedScroll = 0
+        onScroll?(step)
     }
 
     // MARK: - Screen selection

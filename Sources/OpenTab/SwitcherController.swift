@@ -104,7 +104,7 @@ final class SwitcherController {
 
         panel.onScroll = { [weak self] delta in
             guard let self, self.interaction.scrollNavigates else { return }
-            self.dispatch(.navigate(delta: delta))
+            self.navigate(delta, source: "scroll")
         }
 
         // The gesture opens the switcher with whichever shortcut is first, so it
@@ -114,7 +114,7 @@ final class SwitcherController {
             self?.beginOrAdvance(shortcut: 0, reversed: false)
         }
         gestures.onNavigate = { [weak self] delta in
-            self?.dispatch(.navigate(delta: delta))
+            self?.navigate(delta, source: "gesture")
         }
 
         // Thumbnails arrive after the overlay is already on screen. Each one
@@ -280,7 +280,7 @@ final class SwitcherController {
             dispatch(.modifiersReleased)
 
         case .stepBackward:
-            dispatch(.navigate(delta: -1))
+            navigate(-1, source: "shift")
 
         case .overlayKey(let keyCode, let flags, let isKeyDown):
             handleOverlayKey(keyCode: keyCode, flags: flags, isKeyDown: isKeyDown)
@@ -305,7 +305,16 @@ final class SwitcherController {
             }
         }
 
+        let wasIdle = machine.state == .idle
         dispatch(.triggerPressed(shortcut: index, reversed: reversed))
+
+        // Logged from the second press onwards, so a held Tab autorepeating
+        // through the list is as visible in the log as a runaway scroll.
+        if !wasIdle {
+            Log.overlay.notice(
+                "Navigate by tab: \(reversed ? -1 : 1) → selection \(self.machine.selection)"
+            )
+        }
     }
 
     /// Whether the space bar currently belongs to the switcher.
@@ -385,9 +394,9 @@ final class SwitcherController {
         case kVKReturn, kVKKeypadEnter:
             dispatch(.committed)
         case kVKLeftArrow, kVKUpArrow:
-            dispatch(.navigate(delta: -1))
+            navigate(-1, source: "arrow")
         case kVKRightArrow, kVKDownArrow:
-            dispatch(.navigate(delta: 1))
+            navigate(1, source: "arrow")
         default:
             break
         }
@@ -402,10 +411,10 @@ final class SwitcherController {
     private func perform(_ action: SwitcherAction) {
         switch action {
         case .selectNext:
-            dispatch(.navigate(delta: 1))
+            navigate(1, source: "shortcut")
             return
         case .selectPrevious:
-            dispatch(.navigate(delta: -1))
+            navigate(-1, source: "shortcut")
             return
         default:
             break
@@ -563,6 +572,21 @@ final class SwitcherController {
         currentList = WindowListBuilder.search(unfilteredList, query: query)
         machine.setCount(currentList.count)
         refreshOverlayContent()
+    }
+
+    /// Moves the selection and records what moved it.
+    ///
+    /// Logged because the selection can be moved by five different things —
+    /// scroll, trackpad gesture, ⇧, arrow keys, a rebound action — and when it
+    /// ends up somewhere the user did not put it, which one was responsible is
+    /// the entire question. A runaway shows up here as a burst of lines from one
+    /// source, which is how trackpad momentum was caught sliding the selection to
+    /// the far end of the list after the user's fingers had already left.
+    private func navigate(_ delta: Int, source: String) {
+        dispatch(.navigate(delta: delta))
+        Log.overlay.notice(
+            "Navigate by \(source, privacy: .public): \(delta) → selection \(self.machine.selection)"
+        )
     }
 
     /// Routes a hover, once the pointer has earned the right to be listened to.
