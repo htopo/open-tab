@@ -99,6 +99,7 @@ public enum WindowDiscovery {
             // cooperation.
             let recovered = synthesizeMissingWindows(
                 for: appModel,
+                appElement: appElement,
                 alreadyModelled: [],
                 cgInfo: cgInfo,
                 screens: screens,
@@ -119,6 +120,13 @@ public enum WindowDiscovery {
                 """
             )
             windows.append(contentsOf: recovered)
+        }
+
+        let untitled = windows
+            .filter { $0.title.isEmpty && !$0.isApplicationEntry }
+            .map { "\($0.appName)/space=\($0.spaceID.map(String.init) ?? "?")/ax=\($0.axElement != nil)" }
+        if !untitled.isEmpty {
+            Log.registry.notice("Untitled windows: \(untitled.joined(separator: ", "), privacy: .public)")
         }
 
         return Result(windows: windows, apps: apps)
@@ -245,12 +253,21 @@ public enum WindowDiscovery {
     /// right name and on the right Desktop.
     static func synthesizeMissingWindows(
         for app: AppModel,
+        appElement: AXUIElement?,
         alreadyModelled: Set<CGWindowID>,
         cgInfo: [CGWindowID: CGWindowRecord],
         screens: ScreenGeometry,
         previousFocusTimes: [WindowID: Date]
     ) -> [WindowModel] {
-        cgInfo.values
+        // An app that publishes no window *list* may still answer for its focused
+        // window. Worth asking: it costs one call and, when it works, produces
+        // both a real title and an element that can be raised individually rather
+        // than only brought forward with the whole application.
+        let focusedElement = appElement.flatMap { AX.element($0, AXAttribute.focusedWindow) }
+        let focusedID = focusedElement.flatMap { AX.windowID(of: $0) }
+        let focusedTitle = focusedElement.flatMap { AX.string($0, AXAttribute.title) }
+
+        return cgInfo.values
             .filter { record in
                 record.pid == app.id
                     && !alreadyModelled.contains(record.windowID)
@@ -261,11 +278,19 @@ public enum WindowDiscovery {
             .sorted { $0.windowID < $1.windowID }
             .map { record in
                 let id = WindowID(cgWindowID: record.windowID, pid: app.id)
+                let isFocusedOne = focusedID != nil && record.windowID == focusedID
+
+                // `kCGWindowName` is empty without Screen Recording, so the window
+                // server's title is usually unavailable. Accessibility's is not
+                // gated that way, which is why it is preferred when we managed to
+                // get one at all.
+                let title = (isFocusedOne ? focusedTitle : nil) ?? record.title ?? ""
+
                 return WindowModel(
                     id: id,
                     kind: .window,
-                    axElement: nil,
-                    title: record.title ?? "",
+                    axElement: isFocusedOne ? focusedElement : nil,
+                    title: title,
                     appBundleID: app.bundleID,
                     appName: app.name,
                     appIcon: app.icon,

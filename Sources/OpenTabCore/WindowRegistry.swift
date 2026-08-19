@@ -320,6 +320,7 @@ public final class WindowRegistry {
                NSRunningApplication(processIdentifier: pid)?.activationPolicy == .regular {
                 refreshed += WindowDiscovery.synthesizeMissingWindows(
                     for: app,
+                    appElement: element,
                     alreadyModelled: Set(refreshed.map(\.id.cgWindowID)),
                     cgInfo: cgInfo,
                     screens: screens,

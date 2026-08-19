@@ -5,7 +5,7 @@ OpenTab asks for two macOS privacy permissions. One is required, one is optional
 | Permission | Required? | What breaks without it |
 |---|---|---|
 | **Accessibility** | Yes | Everything. The app cannot list windows, cannot focus them, and cannot observe the keyboard. |
-| **Screen Recording** | No | Thumbnails only. The switcher falls back to app icons and stays fully usable. |
+| **Screen Recording** | No | Thumbnails, and window titles for the few apps that publish nothing over Accessibility. The switcher falls back to app icons and app names, and stays fully usable. |
 
 ---
 
@@ -46,9 +46,18 @@ compiled, so the grant silently stops applying after an update. See
 
 ### Why it is needed
 
-Only to draw live window thumbnails. macOS classifies reading the pixels of
+Mainly to draw live window thumbnails. macOS classifies reading the pixels of
 another app's window as screen recording, so `SCScreenshotManager` is gated
 behind it.
+
+It also affects a small number of window *titles*. Most titles come from the
+accessibility API, which is not gated this way. But a few applications — Catalyst
+ones especially — publish no windows over Accessibility at all, and OpenTab
+reconstructs those from the window server instead. The window server will not
+hand over `kCGWindowName` without Screen Recording, so those entries show the
+application name alone until it is granted. OpenTab recovers the title of such an
+app's *focused* window through Accessibility regardless; it is the others that
+stay bare.
 
 ### What OpenTab does without it
 
