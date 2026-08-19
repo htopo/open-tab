@@ -24,6 +24,11 @@ Displays:        ____________________
       flash**. Repeat ten times quickly; the panel must never blink.
 - [ ] **Hold and cycle.** Hold ⌘, press Tab repeatedly, release. The window that
       was highlighted is the one that gets focus.
+- [ ] **Rapid alternation.** Tap ⌘Tab about twice a second for ten seconds. Every
+      tap must swap. A tap that lands while the background reconciliation from the
+      previous one is still in flight used to select the window already in front,
+      so the switch appeared to be skipped — check the log for two consecutive
+      `Focusing` lines naming the same window.
 - [ ] **Reverse.** With the switcher open, tapping ⇧ moves the selection back one
       entry per tap and wraps correctly at the start of the list. Holding ⇧ down
       must not repeat, and releasing it must not step.

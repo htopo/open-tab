@@ -33,6 +33,16 @@ public final class WindowRegistry {
     /// full re-enumeration does not reset the ordering the user relies on.
     private var focusTimes: [WindowID: Date] = [:]
 
+    /// Which window is focused, and when that was established.
+    ///
+    /// Held here rather than read back from `windows` because enumeration runs in
+    /// the background and answers the question as it was when the pass *started*.
+    /// A pass kicked off by opening the switcher lands a few hundred milliseconds
+    /// later — reliably after the user has already committed a switch — and used
+    /// to overwrite the new focus with the old one. See `applyFullResult`.
+    private var focusedWindowID: WindowID?
+    private var focusObservedAt: Date = .distantPast
+
     private var observers: [pid_t: AXAppObserver] = [:]
     private var workspaceObservers: [any NSObjectProtocol] = []
 
@@ -164,6 +174,8 @@ public final class WindowRegistry {
         let carriedFocusTimes = focusTimes
         let timeout = messagingTimeout
 
+        let observedAt = Date()
+
         discoveryQueue.async { [weak self] in
             let started = DispatchTime.now()
             let result = WindowDiscovery.enumerateAll(
@@ -187,12 +199,22 @@ public final class WindowRegistry {
                     across \(spaces.count)
                     """
                 )
-                self.applyFullResult(result)
+                self.applyFullResult(result, observedAt: observedAt)
             }
         }
     }
 
-    private func applyFullResult(_ result: WindowDiscovery.Result) {
+    /// Publishes an enumeration result.
+    ///
+    /// - Parameters:
+    ///   - observedAt: when the pass started. Everything in `result` describes the
+    ///     world as of that moment, which may be several hundred milliseconds ago.
+    ///   - onlyIfChanged: skip publishing when the outcome is identical to what is
+    ///     already live, so an open overlay is not redrawn for nothing.
+    private func applyFullResult(_ result: WindowDiscovery.Result,
+                                 observedAt: Date,
+                                 onlyIfChanged: Bool = false) {
+        let previousApps = apps
         apps = result.apps
 
         // Preserve MRU for windows we already knew about; seed the rest.
@@ -213,6 +235,10 @@ public final class WindowRegistry {
         let liveIDs = Set(merged.map(\.id))
         focusTimes = focusTimes.filter { liveIDs.contains($0.key) }
 
+        applyRecordedFocus(to: &merged, observedAt: observedAt)
+
+        guard !onlyIfChanged || windows != merged || apps != previousApps else { return }
+
         windows = merged
         isPopulated = true
         onChange?()
@@ -229,6 +255,7 @@ public final class WindowRegistry {
 
         let carriedFocusTimes = focusTimes
         let timeout = messagingTimeout
+        let observedAt = Date()
 
         discoveryQueue.async { [weak self] in
             let result = WindowDiscovery.enumerateAll(
@@ -241,9 +268,7 @@ public final class WindowRegistry {
 
                 // Only publish if something actually moved. Redrawing an open
                 // overlay for an identical list would flicker for no reason.
-                guard self.windows != result.windows else { return }
-                Log.registry.debug("Reconciliation found drift; updating list")
-                self.applyFullResult(result)
+                self.applyFullResult(result, observedAt: observedAt, onlyIfChanged: true)
             }
         }
     }
@@ -264,6 +289,7 @@ public final class WindowRegistry {
 
         let carriedFocusTimes = focusTimes
         let timeout = messagingTimeout
+        let observedAt = Date()
 
         discoveryQueue.async { [weak self] in
             let element = AXUIElementCreateApplication(pid)
@@ -291,12 +317,51 @@ public final class WindowRegistry {
             }
 
             Task { @MainActor [weak self] in
-                self?.replaceWindows(ofPID: pid, with: refreshed)
+                self?.replaceWindows(ofPID: pid, with: refreshed, observedAt: observedAt)
             }
         }
     }
 
-    private func replaceWindows(ofPID pid: pid_t, with refreshed: [WindowModel]) {
+    /// Reconciles enumerated focus against what is actually known.
+    ///
+    /// Enumeration runs in the background and describes the world as of
+    /// `observedAt`. Anything recorded since then — a switch the user just
+    /// committed, an accessibility notification — is newer, and overwriting it
+    /// with the older answer is how a fresh ⌘Tab ended up selecting the window
+    /// the user was already on: "active window first" promoted the window they
+    /// had just left, so the selection started one entry below where it should
+    /// have, and releasing the key changed nothing. It only appeared when
+    /// switching twice quickly, because that is when a pass is still in flight.
+    ///
+    /// Also enforces that exactly one window is flagged, which a per-application
+    /// refresh cannot guarantee on its own: it only ever sees one app's windows,
+    /// so it can raise a second flag without lowering the first.
+    private func applyRecordedFocus(to list: inout [WindowModel], observedAt: Date) {
+        guard focusObservedAt > observedAt else {
+            // The pass is the newest information; adopt what it found.
+            if let focused = list.first(where: \.isFocused) {
+                focusedWindowID = focused.id
+                focusObservedAt = observedAt
+            }
+            return
+        }
+
+        list = Self.reconcilingFocus(in: list, toRecorded: focusedWindowID)
+    }
+
+    /// Rewrites `isFocused` so that exactly the recorded window carries it.
+    ///
+    /// Pure, and internal rather than private, so the rule can be tested without
+    /// an Accessibility grant — the registry itself cannot run in CI.
+    nonisolated static func reconcilingFocus(in list: [WindowModel], toRecorded id: WindowID?) -> [WindowModel] {
+        var result = list
+        for index in result.indices {
+            result[index].isFocused = result[index].id == id
+        }
+        return result
+    }
+
+    private func replaceWindows(ofPID pid: pid_t, with refreshed: [WindowModel], observedAt: Date) {
         var updated = windows.filter { $0.id.pid != pid }
         updated.append(contentsOf: refreshed)
 
@@ -305,6 +370,8 @@ public final class WindowRegistry {
         if hasRealWindow {
             updated.removeAll { $0.id.pid == pid && $0.isApplicationEntry }
         }
+
+        applyRecordedFocus(to: &updated, observedAt: observedAt)
 
         guard updated != windows else { return }
         windows = updated
@@ -347,6 +414,8 @@ public final class WindowRegistry {
     public func noteFocus(_ id: WindowID) {
         let now = Date()
         focusTimes[id] = now
+        focusedWindowID = id
+        focusObservedAt = now
 
         var changed = false
         for index in windows.indices {
