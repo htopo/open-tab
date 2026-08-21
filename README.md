@@ -64,7 +64,8 @@ app is not sandboxed, is in [docs/PERMISSIONS.md](docs/PERMISSIONS.md).
 
 Hold **⌘** and press **Tab**.
 
-- Keep holding ⌘ and press Tab again to move forward; tap ⇧ to move back.
+- Keep holding ⌘ and press Tab again to move forward; tap ⇧ to move back. Hold
+  either one down and it keeps going.
   (Prefer ⇧Tab? Turn off *Controls → Additional controls → Shift steps
   backwards*.)
 - Arrow keys navigate the grid; the mouse works too.

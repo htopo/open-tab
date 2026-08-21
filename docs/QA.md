@@ -67,6 +67,13 @@ Displays:        ____________________
       the keystrokes that arrived during the rebuild.
 - [ ] **No animation on reveal.** Holding space swaps the panel to columns with the
       selection already in place — the highlight must not be seen travelling there.
+- [ ] **Holding shift repeats.** With the switcher open, hold ⇧ down. The
+      selection keeps stepping backwards at the same rate holding Tab steps
+      forwards — the system's own key-repeat rate. Letting go stops it, and the
+      release must not itself move the selection.
+- [ ] **One Desktop, no effect.** With only one Desktop in use, press space while
+      the switcher is open. Nothing happens: no columns, and the selection does
+      not move.
 - [ ] **Desktop columns.** With two or more Desktops in use and the switcher
       narrowed to the current one, hold space. The other Desktops appear as
       as columns in Desktop order — Desktop 1 leftmost, highest number rightmost —

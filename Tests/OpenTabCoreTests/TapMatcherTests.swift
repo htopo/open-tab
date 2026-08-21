@@ -44,7 +44,7 @@ struct TapMatcherTests {
             characters: nil, config: config(active: true, modifiers: .command),
             previousFlags: .maskCommand
         )
-        #expect(outcome == .stepBackward)
+        #expect(outcome == .stepBackward(isPressed: true))
     }
 
     /// Only the press counts. Acting on the resulting state instead would fire
@@ -59,14 +59,17 @@ struct TapMatcherTests {
         #expect(outcome == .ignore)
     }
 
-    @Test("Releasing shift does not step")
-    func releasingShiftDoesNotStep() {
+    /// The release is reported, but as an end rather than a step: it is what
+    /// stops the repeat that holding ⇧ started. Treating it as another step would
+    /// move the selection one further every time the user let go.
+    @Test("Releasing shift ends the repeat without stepping")
+    func releasingShiftEndsTheRepeat() {
         let outcome = TapMatcher.evaluate(
             type: .flagsChanged, keyCode: 0, flags: .maskCommand,
             characters: nil, config: config(active: true, modifiers: .command),
             previousFlags: [.maskCommand, .maskShift]
         )
-        #expect(outcome == .ignore)
+        #expect(outcome == .stepBackward(isPressed: false))
     }
 
     @Test("Shift before the switcher is open does nothing")
@@ -122,7 +125,8 @@ struct TapMatcherTests {
     /// event would leave them all believing ⇧ is still down.
     @Test("A shift step does not swallow the event")
     func shiftStepDoesNotSwallow() {
-        #expect(!TapOutcome.stepBackward.swallowsEvent)
+        #expect(!TapOutcome.stepBackward(isPressed: true).swallowsEvent)
+        #expect(!TapOutcome.stepBackward(isPressed: false).swallowsEvent)
     }
 
     // MARK: - Holding space to reveal other Spaces

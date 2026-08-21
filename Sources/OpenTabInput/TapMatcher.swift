@@ -75,8 +75,13 @@ public enum TapOutcome: Equatable, Sendable {
     case trigger(shortcut: Int, reversed: Bool)
     /// The shortcut's modifiers came up.
     case modifiersReleased
-    /// ⇧ was pressed on its own while the switcher was open.
-    case stepBackward
+    /// ⇧ went down or came up on its own while the switcher was open.
+    ///
+    /// Both edges are reported because holding ⇧ has to repeat like holding Tab
+    /// does, and the release is the only signal that it should stop. The system
+    /// generates no repeat events for modifier keys, so the repetition is ours to
+    /// produce and ours to end.
+    case stepBackward(isPressed: Bool)
     /// A key pressed or released while the overlay is on screen.
     ///
     /// Both halves are reported. Most keys act on the press and ignore the
@@ -160,11 +165,16 @@ public enum TapMatcher {
             let stillHeld = ModifierSet(eventFlags: flags)
             if stillHeld.isDisjoint(with: config.activeModifiers) { return .modifiersReleased }
 
-            // ⇧ going down on its own steps backwards. Only the transition counts:
-            // acting on the resulting state would repeat on every subsequent
-            // modifier event for as long as ⇧ stayed down.
-            let shiftWentDown = flags.contains(.maskShift) && !previousFlags.contains(.maskShift)
-            if config.shiftStepsBackwards, shiftWentDown { return .stepBackward }
+            // ⇧ going down on its own steps backwards, and holding it repeats.
+            // Only transitions are reported: the resulting state alone would fire
+            // again on every later modifier event for as long as ⇧ stayed down,
+            // which is a different thing entirely from a repeat at the user's
+            // configured rate.
+            if config.shiftStepsBackwards {
+                let shiftNow = flags.contains(.maskShift)
+                let shiftBefore = previousFlags.contains(.maskShift)
+                if shiftNow != shiftBefore { return .stepBackward(isPressed: shiftNow) }
+            }
 
             return .ignore
 

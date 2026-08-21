@@ -76,6 +76,9 @@ final class SwitcherController {
     /// See `setOtherSpacesRevealed`.
     private var collapseTimer: Timer?
 
+    /// Drives the repeat while ⇧ is held down. See `beginShiftRepeat`.
+    private var shiftRepeatTimer: Timer?
+
     /// How long a release of the space bar waits before narrowing the list again.
     ///
     /// Releasing ⌘ and the space bar together is one gesture to the user, but the
@@ -185,6 +188,7 @@ final class SwitcherController {
         holdTimer = nil
         collapseTimer?.invalidate()
         collapseTimer = nil
+        endShiftRepeat()
         panel.hide()
         highlighter.tearDown()
         gestures.stop()
@@ -314,8 +318,8 @@ final class SwitcherController {
         case .modifiersReleased:
             dispatch(.modifiersReleased)
 
-        case .stepBackward:
-            navigate(-1, source: "shift")
+        case .stepBackward(let isPressed):
+            if isPressed { beginShiftRepeat() } else { endShiftRepeat() }
 
         case .overlayKey(let keyCode, let flags, let isKeyDown):
             handleOverlayKey(keyCode: keyCode, flags: flags, isKeyDown: isKeyDown)
@@ -404,6 +408,20 @@ final class SwitcherController {
 
         isOtherSpacesRevealed = revealed
         buildList(for: shortcuts[index])
+
+        // Only one Desktop in play, so there was nothing to reveal. Pressing space
+        // asked a question with no answer, and the honest response is to do
+        // nothing at all — not to move the selection to the top, which is what the
+        // "go to the first other Desktop, or else the start of the list" fallback
+        // did on a machine with a single Desktop.
+        if revealed, spaceSections.count <= 1 {
+            isOtherSpacesRevealed = false
+            spaceSections = []
+            buildList(for: shortcuts[index])
+            updateSpaceKeyClaim()
+            return
+        }
+
         dispatch(.listCountChanged(currentList.count))
 
         // Revealing jumps to the first entry of the next Desktop; letting go
@@ -686,6 +704,44 @@ final class SwitcherController {
         refreshOverlayContent()
     }
 
+    /// Steps back once, then keeps stepping for as long as ⇧ is held.
+    ///
+    /// Holding Tab advances through the list because the system repeats key-down
+    /// events. It generates none for modifier keys, so ⇧ stepped once and then sat
+    /// there — the same gesture behaving differently in each direction, for a
+    /// reason that is invisible from the outside.
+    ///
+    /// The rate comes from the user's own Keyboard settings, so it matches every
+    /// other held key on the machine rather than a number picked here. Both are
+    /// clamped: a delay of zero would start repeating before the user could let go
+    /// of a single press, and an interval of zero would spin the run loop.
+    private func beginShiftRepeat() {
+        navigate(-1, source: "shift")
+
+        shiftRepeatTimer?.invalidate()
+        let delay = max(NSEvent.keyRepeatDelay, 0.15)
+        let timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.startShiftRepeating() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        shiftRepeatTimer = timer
+    }
+
+    private func startShiftRepeating() {
+        shiftRepeatTimer?.invalidate()
+        let interval = max(NSEvent.keyRepeatInterval, 0.02)
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.navigate(-1, source: "shift") }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        shiftRepeatTimer = timer
+    }
+
+    private func endShiftRepeat() {
+        shiftRepeatTimer?.invalidate()
+        shiftRepeatTimer = nil
+    }
+
     /// Moves the selection and records what moved it.
     ///
     /// Logged because the selection can be moved by five different things —
@@ -897,6 +953,9 @@ final class SwitcherController {
         holdTimer = nil
         collapseTimer?.invalidate()
         collapseTimer = nil
+        // A repeat left running past the end of the interaction would keep moving
+        // a selection nobody is looking at.
+        endShiftRepeat()
         panel.hide(fadeDuration: fadeOutDuration)
         highlighter.hide()
         gestures.setSwitcherOpen(false)
