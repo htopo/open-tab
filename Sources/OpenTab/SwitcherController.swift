@@ -800,6 +800,20 @@ final class SwitcherController {
         gestures.setSwitcherOpen(true)
         updateSpaceKeyClaim()
 
+        // Alpha is checked after the fade should have finished, not before it
+        // starts: a panel that is up, correctly sized, and invisible is the one
+        // failure mode this surface has that looks like nothing happening at all.
+        let expected = fadeInDuration
+        DispatchQueue.main.asyncAfter(deadline: .now() + expected + 0.05) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.panel.isVisible else { return }
+                guard self.panel.alphaForLogging < 0.95 else { return }
+                Log.overlay.error(
+                    "Overlay is on screen but transparent: alpha=\(self.panel.alphaForLogging)"
+                )
+            }
+        }
+
         updatePreviewHighlight()
         requestCaptures()
     }

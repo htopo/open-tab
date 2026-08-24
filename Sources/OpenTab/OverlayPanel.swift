@@ -37,6 +37,19 @@ final class OverlayPanel {
     private var scrollMonitor: Any?
     private var accumulatedScroll: CGFloat = 0
 
+    /// Bumped by every show and every hide.
+    ///
+    /// The fades are asynchronous and the switcher is fast: a new switch can begin
+    /// while the previous panel is still fading out. Two animations then target the
+    /// same `alphaValue`, and the completion handler of the older one runs against
+    /// a panel that has since been shown again — ordering out, or leaving the alpha
+    /// wherever the losing animation left it, a panel the user is looking at right
+    /// now. The symptom is a switcher that works perfectly and cannot be seen.
+    ///
+    /// A completion handler that is not the current generation has been overtaken
+    /// and does nothing.
+    private var visibility = 0
+
     init() {
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
@@ -80,6 +93,10 @@ final class OverlayPanel {
 
     var isVisible: Bool { panel.isVisible }
 
+    /// For diagnostics: where the panel actually ended up, and how big.
+    var frameForLogging: NSRect { panel.frame }
+    var alphaForLogging: CGFloat { panel.alphaValue }
+
     /// Shows the panel centred on `screen`, sized to its content.
     ///
     /// - Parameter fadeDuration: 0 shows it instantly. The switcher is a
@@ -90,19 +107,31 @@ final class OverlayPanel {
         let size = hostingView.fittingSize
         position(size: size, on: screen)
 
-        if fadeDuration > 0 {
-            panel.alphaValue = 0
-            // orderFrontRegardless rather than makeKeyAndOrderFront: the panel
-            // must appear without taking key status away from the app underneath.
-            panel.orderFrontRegardless()
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = fadeDuration
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                panel.animator().alphaValue = 1
-            }
-        } else {
+        visibility &+= 1
+        let generation = visibility
+
+        guard fadeDuration > 0 else {
             panel.alphaValue = 1
             panel.orderFrontRegardless()
+            startWatchingForOutsideClicks()
+            return
+        }
+
+        panel.alphaValue = 0
+        // orderFrontRegardless rather than makeKeyAndOrderFront: the panel must
+        // appear without taking key status away from the app underneath.
+        panel.orderFrontRegardless()
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = fadeDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().alphaValue = 1
+        } completionHandler: { [weak self] in
+            // Land on the end state explicitly. An interrupted fade leaves the
+            // alpha part way, and part way from zero is invisible — the panel
+            // would be up, correctly sized and positioned, and never seen.
+            guard let self, self.visibility == generation else { return }
+            self.panel.alphaValue = 1
         }
 
         startWatchingForOutsideClicks()
@@ -127,6 +156,9 @@ final class OverlayPanel {
         stopWatchingForOutsideClicks()
         resignKeyIfNeeded()
 
+        visibility &+= 1
+        let generation = visibility
+
         guard fadeDuration > 0, panel.isVisible else {
             panel.orderOut(nil)
             panel.alphaValue = 1
@@ -137,12 +169,14 @@ final class OverlayPanel {
             context.duration = fadeDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
             panel.animator().alphaValue = 0
-        } completionHandler: { [weak panel] in
-            // Guard against a new switch having started during the fade — ordering
-            // out then would hide a panel the user is actively looking at.
-            guard let panel, panel.alphaValue < 0.05 else { return }
-            panel.orderOut(nil)
-            panel.alphaValue = 1
+        } completionHandler: { [weak self] in
+            // A new switch during the fade makes this stale. Reading the alpha to
+            // decide, as this used to, asks the wrong question: the competing
+            // animation drives it low too, so a panel that had just been shown
+            // again looked exactly like one that had finished fading out.
+            guard let self, self.visibility == generation else { return }
+            self.panel.orderOut(nil)
+            self.panel.alphaValue = 1
         }
     }
 
