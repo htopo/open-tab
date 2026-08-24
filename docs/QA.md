@@ -54,6 +54,11 @@ Displays:        ____________________
 - [ ] **Hidden and minimized still appear.** Minimize a window and hide an app
       (⌘H). Both must remain in the list — they are the two legitimate cases of a
       window with no window-server record, and the check above must not catch them.
+- [ ] **Every browser window, on every Desktop.** Open three browser windows with
+      one on the current Desktop and two elsewhere, set *Show windows from Spaces*
+      to **All Spaces**, and ⌘Tab. All three appear. Browsers publish only the
+      window on the Desktop you are standing on over Accessibility, so the others
+      are reconstructed from the window server.
 - [ ] **No phantom windows.** Count a browser's entries in the switcher against its
       real windows. The window server lists offscreen scratch windows and tab
       previews too; recovery must not put those in the list.

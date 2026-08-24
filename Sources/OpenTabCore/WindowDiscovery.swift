@@ -52,6 +52,12 @@ public enum WindowDiscovery {
         var windows: [WindowModel] = []
         var apps: [pid_t: AppModel] = [:]
 
+        // Per-application tally of what Accessibility offered against what
+        // survived. "Offered" and "kept" answer different questions and the
+        // switcher shows neither: an app missing windows because it never
+        // published them looks exactly like one whose windows were filtered out.
+        var tally: [String] = []
+
         for runningApp in candidateApplications() {
             let pid = runningApp.processIdentifier
 
@@ -76,7 +82,8 @@ public enum WindowDiscovery {
             let focusedElement = AX.element(appElement, AXAttribute.focusedWindow)
             let focusedWindowID = focusedElement.flatMap { AX.windowID(of: $0) }
 
-            var modelled = 0
+            var modelledIDs: Set<CGWindowID> = []
+            var publishedArea: CGFloat = 0
             for element in windowElements {
                 guard let model = makeWindowModel(
                     element: element,
@@ -87,20 +94,26 @@ public enum WindowDiscovery {
                     previousFocusTimes: previousFocusTimes
                 ) else { continue }
                 windows.append(model)
-                modelled += 1
+                modelledIDs.insert(model.id.cgWindowID)
+                publishedArea = max(publishedArea, model.frame.width * model.frame.height)
             }
 
-            guard modelled == 0, isRegular else { continue }
+            if !windowElements.isEmpty {
+                tally.append("\(appModel.name) \(modelledIDs.count)/\(windowElements.count)")
+            }
 
-            // Accessibility produced nothing usable for this app — it either
-            // published no windows at all, or published only things that are not
-            // switch targets. Ask the window server before concluding the app has
-            // no windows: it sees every Space and does not need the app's
-            // cooperation.
+            guard isRegular else { continue }
+
+            // Ask the window server what Accessibility left out. It is not only
+            // apps that publish *nothing* that need this: a browser publishes the
+            // window on the Desktop you are standing on and stays silent about the
+            // ones parked elsewhere, so asking only when the list came back empty
+            // left two windows out of three invisible.
             let recovered = synthesizeMissingWindows(
                 for: appModel,
                 appElement: appElement,
-                alreadyModelled: [],
+                alreadyModelled: modelledIDs,
+                publishedArea: publishedArea,
                 cgInfo: cgInfo,
                 screens: screens,
                 previousFocusTimes: previousFocusTimes
@@ -109,18 +122,25 @@ public enum WindowDiscovery {
             guard !recovered.isEmpty else {
                 // Genuinely window-less. This is the entry the "apps with no open
                 // window" filter is about.
-                windows.append(makeApplicationEntry(app: appModel, element: appElement))
+                if modelledIDs.isEmpty {
+                    windows.append(makeApplicationEntry(app: appModel, element: appElement))
+                }
                 continue
             }
 
             Log.registry.notice(
                 """
-                \(appModel.name, privacy: .public): \(windowElements.count) window(s) offered by \
-                Accessibility, none usable; recovered \(recovered.count) from the window server
+                \(appModel.name, privacy: .public): Accessibility offered \
+                \(windowElements.count), kept \(modelledIDs.count); \
+                recovered \(recovered.count) more from the window server
                 """
             )
             windows.append(contentsOf: recovered)
         }
+
+        Log.registry.notice(
+            "Accessibility kept/offered: \(tally.joined(separator: ", "), privacy: .public)"
+        )
 
         let untitled = windows
             .filter { $0.title.isEmpty && !$0.isApplicationEntry }
@@ -269,6 +289,7 @@ public enum WindowDiscovery {
         for app: AppModel,
         appElement: AXUIElement?,
         alreadyModelled: Set<CGWindowID>,
+        publishedArea: CGFloat,
         cgInfo: [CGWindowID: CGWindowRecord],
         screens: ScreenGeometry,
         previousFocusTimes: [WindowID: Date]
@@ -281,26 +302,48 @@ public enum WindowDiscovery {
         let focusedID = focusedElement.flatMap { AX.windowID(of: $0) }
         let focusedTitle = focusedElement.flatMap { AX.string($0, AXAttribute.title) }
 
-        return cgInfo.values
-            .filter { record in
-                record.pid == app.id
-                    && !alreadyModelled.contains(record.windowID)
-                    && record.layer == normalWindowLayer
-                    && record.bounds.width >= minimumWindowSize
-                    && record.bounds.height >= minimumWindowSize
-            }
+        let candidates = cgInfo.values.filter { record in
+            record.pid == app.id
+                && !alreadyModelled.contains(record.windowID)
+                && record.layer == normalWindowLayer
+                && record.bounds.width >= minimumWindowSize
+                && record.bounds.height >= minimumWindowSize
+        }
+
+        // Scale the bar to the application's own idea of a window.
+        //
+        // The window server's list is not a list of switchable windows. A browser
+        // keeps more than a dozen ordinary-layer windows per profile — tab-strip
+        // shims, drag proxies, extension popups — and they sit on real Desktops
+        // and are wider than the size floor, so nothing cheap separates them from
+        // a browser window parked on another Desktop. What does separate them is
+        // scale: a window someone switches to is roughly the size of the other
+        // windows that application already has, and these are a fraction of it.
+        //
+        // Half the largest is a wide margin rather than a tuned threshold. On the
+        // machine this was measured against it admits three browser windows of
+        // 1920×1050 and 1512×949 and rejects the next largest impostor at
+        // 1421×218 — a factor of four clear — and changes nothing for any other
+        // application, each of which had one or two windows that all passed.
+        let minimumArea = recoveryAreaFloor(
+            publishedArea: publishedArea,
+            candidateAreas: candidates.map { $0.bounds.width * $0.bounds.height }
+        )
+
+        return candidates
+            .filter { $0.bounds.width * $0.bounds.height >= minimumArea }
             .sorted { $0.windowID < $1.windowID }
-            // A window the user can reach is on a Desktop. These records are being
-            // trusted precisely because Accessibility said nothing about them, so
-            // there is no second opinion on whether they are real — and plenty of
-            // them are not: applications keep full-size window objects around that
-            // they never show, and those look identical here to a window parked on
-            // another Desktop. The difference is that the window server places the
-            // real one somewhere and the phantom nowhere.
+            // A window the user can reach is on a Desktop. Applications keep
+            // full-size window objects around that they never show, and those look
+            // identical to a window parked on another Desktop except that the
+            // window server places the real one somewhere and the phantom nowhere.
             //
-            // Safe as a filter only because it is used nowhere else: minimized
-            // windows also belong to no Desktop, but they come from Accessibility
-            // and have no window-server record at all, so they never reach this.
+            // Last of the filters because it is the only one that costs a round
+            // trip to the window server, and by here most candidates are gone.
+            //
+            // Safe only for reconstructions: minimized windows belong to no
+            // Desktop either, but they come from Accessibility with no
+            // window-server record at all, so they never reach this.
             .filter { PrivateSymbols.workspace(for: $0.windowID) != nil }
             .map { record in
                 let id = WindowID(cgWindowID: record.windowID, pid: app.id)
@@ -331,6 +374,22 @@ public enum WindowDiscovery {
                     isFocused: false
                 )
             }
+    }
+
+    /// The smallest a reconstructed window may be, for one application.
+    ///
+    /// Scaled to that application's own idea of a window: half the area of the
+    /// largest one it has, whether that came from Accessibility or from the
+    /// window server. Deliberately a wide margin rather than a tuned threshold —
+    /// it has to separate windows from shims, not rank them.
+    ///
+    /// Measured against a browser with three real windows and eleven impostors on
+    /// real Desktops: largest 1920×1050, floor 1,008,000, the two other real
+    /// windows at 1,434,888 each admitted, the largest impostor at 1421×218 —
+    /// 309,778 — rejected by a factor of three. Every other application on that
+    /// machine had one or two windows, all of which passed.
+    static func recoveryAreaFloor(publishedArea: CGFloat, candidateAreas: [CGFloat]) -> CGFloat {
+        max(publishedArea, candidateAreas.max() ?? 0) / 2
     }
 
     /// Whether the window server believes this process owns an ordinary window.

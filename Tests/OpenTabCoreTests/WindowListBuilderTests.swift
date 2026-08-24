@@ -811,3 +811,65 @@ struct FocusSeedTests {
         #expect(seeds == seeds.sorted(by: >))
     }
 }
+
+/// The size bar for windows reconstructed from the window server.
+///
+/// Reconstruction exists because some applications do not publish their windows
+/// over Accessibility — all of them for a chat app, only the ones on other
+/// Desktops for a browser. The window server knows them, but its list is not a
+/// list of switchable windows: a browser keeps a dozen ordinary-layer windows per
+/// profile for tab strips, drag proxies and extension popups, all on real
+/// Desktops and all wider than any fixed size floor.
+@Suite("Reconstruction size floor")
+struct RecoveryAreaTests {
+
+    /// The real numbers from the machine this was diagnosed on.
+    private let browserWindows: [CGFloat] = [
+        1920 * 1050,   // the window Accessibility did publish
+        1512 * 949,    // on another Desktop
+        1512 * 949,    // on another Desktop
+        1421 * 218,    // the largest impostor
+        1013 * 107, 1013 * 89, 969 * 89, 969 * 88,
+        1512 * 46, 1512 * 41, 608 * 534, 403 * 84,
+    ]
+
+    @Test("A browser's real windows pass and its shims do not")
+    func browserShimsAreRejected() {
+        let floor = WindowDiscovery.recoveryAreaFloor(
+            publishedArea: 1920 * 1050,
+            candidateAreas: Array(browserWindows.dropFirst())
+        )
+
+        #expect(1512 * 949 >= floor)
+        #expect(1421 * 218 < floor)
+        let passing = browserWindows.filter { $0 >= floor }
+        #expect(passing.count == 3)
+    }
+
+    /// An application whose windows Accessibility never mentioned has no
+    /// published area to scale from, so the largest candidate sets the bar.
+    @Test("With nothing published, the largest candidate sets the bar")
+    func unpublishedAppScalesFromItsOwnWindows() {
+        let floor = WindowDiscovery.recoveryAreaFloor(
+            publishedArea: 0,
+            candidateAreas: [CGFloat(1043 * 600)]
+        )
+        #expect(1043 * 600 >= floor)
+    }
+
+    /// The published window can be larger than anything left to reconstruct; the
+    /// bar must still come from it, or a shim would set its own low bar and pass.
+    @Test("A large published window keeps the bar high")
+    func publishedAreaDominates() {
+        let floor = WindowDiscovery.recoveryAreaFloor(
+            publishedArea: 1920 * 1050,
+            candidateAreas: [CGFloat(400 * 90)]
+        )
+        #expect(400 * 90 < floor)
+    }
+
+    @Test("No candidates and nothing published is a floor of zero")
+    func emptyIsZero() {
+        #expect(WindowDiscovery.recoveryAreaFloor(publishedArea: 0, candidateAreas: []) == 0)
+    }
+}

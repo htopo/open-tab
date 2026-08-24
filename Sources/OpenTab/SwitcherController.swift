@@ -689,8 +689,18 @@ final class SwitcherController {
         machine.setCount(currentList.count)
 
         let elapsedMS = Double(DispatchTime.now().uptimeNanoseconds - started.uptimeNanoseconds) / 1_000_000
+
+        // The registry count alongside the list length is what separates "the
+        // filter dropped it" from "we never knew about it" — two very different
+        // bugs that look identical from the switcher.
+        let contents = currentList
+            .map { "\($0.appName)@\($0.spaceID.map(String.init) ?? "-")" }
+            .joined(separator: ", ")
         Log.overlay.notice(
-            "Built switcher list: \(self.currentList.count) entries in \(elapsedMS, format: .fixed(precision: 2))ms"
+            """
+            Built switcher list: \(self.currentList.count) of \(snapshot.windows.count) known \
+            in \(elapsedMS, format: .fixed(precision: 2))ms — \(contents, privacy: .public)
+            """
         )
 
         // Repair drift in the background. Never blocks this interaction.

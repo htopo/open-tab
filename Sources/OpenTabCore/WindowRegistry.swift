@@ -331,15 +331,15 @@ public final class WindowRegistry {
             // filtered out of every enumeration.
             let isRegular = NSRunningApplication(processIdentifier: pid)?.activationPolicy == .regular
 
-            // Same substitution the full enumeration makes, under the same rule:
-            // only when the application published nothing at all. Without it a
-            // refresh would quietly drop the windows it cannot see and undo the
-            // recovery a moment after enumeration made it.
-            if refreshed.isEmpty, isRegular {
+            // The same substitution the full enumeration makes, on the same terms.
+            // Without it a refresh would quietly drop the windows Accessibility
+            // cannot see and undo that recovery moments after enumeration made it.
+            if isRegular {
                 refreshed += WindowDiscovery.synthesizeMissingWindows(
                     for: app,
                     appElement: element,
                     alreadyModelled: Set(refreshed.map(\.id.cgWindowID)),
+                    publishedArea: refreshed.map { $0.frame.width * $0.frame.height }.max() ?? 0,
                     cgInfo: cgInfo,
                     screens: screens,
                     previousFocusTimes: carriedFocusTimes
