@@ -84,22 +84,28 @@ public enum WindowDiscovery {
 
             var modelledIDs: Set<CGWindowID> = []
             var publishedArea: CGFloat = 0
+            var rejections: [String] = []
             for element in windowElements {
-                guard let model = makeWindowModel(
+                let candidate = examineWindow(
                     element: element,
                     app: appModel,
                     cgInfo: cgInfo,
                     screens: screens,
                     focusedWindowID: focusedWindowID,
                     previousFocusTimes: previousFocusTimes
-                ) else { continue }
+                )
+                guard let model = candidate.model else {
+                    if let reason = candidate.rejection { rejections.append(reason) }
+                    continue
+                }
                 windows.append(model)
                 modelledIDs.insert(model.id.cgWindowID)
                 publishedArea = max(publishedArea, model.frame.width * model.frame.height)
             }
 
             if !windowElements.isEmpty {
-                tally.append("\(appModel.name) \(modelledIDs.count)/\(windowElements.count)")
+                let refused = rejections.isEmpty ? "" : " [\(rejections.joined(separator: " "))]"
+                tally.append("\(appModel.name) \(modelledIDs.count)/\(windowElements.count)\(refused)")
             }
 
             guard isRegular else { continue }
@@ -182,9 +188,31 @@ public enum WindowDiscovery {
         focusedWindowID: CGWindowID?,
         previousFocusTimes: [WindowID: Date]
     ) -> WindowModel? {
+        examineWindow(
+            element: element, app: app, cgInfo: cgInfo, screens: screens,
+            focusedWindowID: focusedWindowID, previousFocusTimes: previousFocusTimes
+        ).model
+    }
+
+    /// The same construction, plus why it was refused when it was.
+    ///
+    /// A window Accessibility offered and this code turned down is the hardest
+    /// kind of absence to investigate: the application published it, so the
+    /// application is not at fault, and the switcher simply does not show it.
+    /// Naming the rule that rejected it turns that into a one-line answer.
+    static func examineWindow(
+        element: AXUIElement,
+        app: AppModel,
+        cgInfo: [CGWindowID: CGWindowRecord],
+        screens: ScreenGeometry,
+        focusedWindowID: CGWindowID?,
+        previousFocusTimes: [WindowID: Date]
+    ) -> (model: WindowModel?, rejection: String?) {
         // Role and subrole filtering. Sheets, popovers, tooltips, and the
         // AXUnknown grab-bag are not switch targets.
-        guard AX.string(element, AXAttribute.role) == AXRole.window else { return nil }
+        guard AX.string(element, AXAttribute.role) == AXRole.window else {
+            return (nil, "role")
+        }
 
         let subrole = AX.string(element, AXAttribute.subrole)
         switch subrole {
@@ -195,21 +223,23 @@ public enum WindowDiscovery {
             // layer checks below still filter out the junk.
             break
         default:
-            return nil
+            return (nil, "subrole=\(subrole ?? "?")")
         }
 
         guard let cgWindowID = AX.windowID(of: element) else {
             // Without a CGWindowID the window cannot be joined to capture or Space
             // data. Falling back to heuristic matching is possible but lossy; for
             // now such windows are skipped rather than shown with wrong metadata.
-            return nil
+            return (nil, "no-window-id")
         }
 
         let record = cgInfo[cgWindowID]
         let isMinimized = AX.bool(element, AXAttribute.minimized) ?? false
 
         // Drop window-server chrome: menu-bar panels, the Dock, launcher overlays.
-        if let record, record.layer != normalWindowLayer { return nil }
+        if let record, record.layer != normalWindowLayer {
+            return (nil, "layer=\(record.layer)")
+        }
 
         // No record at all is a stronger signal than it looks. The window list is
         // taken with `.optionAll`, which spans every Space and includes offscreen
@@ -224,7 +254,9 @@ public enum WindowDiscovery {
         // Without this check, background agents that publish accessibility
         // windows they never show — the Dock, Control Center, launcher bars —
         // appeared as ordinary entries.
-        if record == nil, !isMinimized, !app.isHidden { return nil }
+        if record == nil, !isMinimized, !app.isHidden {
+            return (nil, "no-window-server-record")
+        }
 
         // Geometry: prefer the accessibility frame, fall back to the CG record.
         // A minimized window's AX frame is stale but is the best available.
@@ -233,13 +265,13 @@ public enum WindowDiscovery {
         if !isMinimized,
            frame != .zero,
            frame.width < minimumWindowSize || frame.height < minimumWindowSize {
-            return nil
+            return (nil, "size=\(Int(frame.width))x\(Int(frame.height))")
         }
 
         let id = WindowID(cgWindowID: cgWindowID, pid: app.id)
         let isFocused = focusedWindowID == cgWindowID && app.isActive
 
-        return WindowModel(
+        return (WindowModel(
             id: id,
             kind: .window,
             axElement: element,
@@ -256,7 +288,7 @@ public enum WindowDiscovery {
             lastFocusedAt: previousFocusTimes[id]
                 ?? (isFocused ? Date() : seededFocusTime(zOrder: record?.zOrder)),
             isFocused: isFocused
-        )
+        ), nil)
     }
 
     /// Windows the window server knows about that Accessibility never offered.

@@ -61,12 +61,15 @@ public enum WindowActions {
         guard let element = window.axElement else {
             if runningApp.isHidden { runningApp.unhide() }
             let activated = runningApp.activate()
+
             Log.accessibility.notice(
                 """
                 Focus \(window.qualifiedTitle, privacy: .public) by activating the app: \
                 activated=\(activated) (no accessibility element)
                 """
             )
+
+            raiseOnceItAppears(window)
             return activated
         }
 
@@ -97,6 +100,60 @@ public enum WindowActions {
             """
         )
         return raised || activated
+    }
+
+    /// Retries the raise after the application has come forward.
+    ///
+    /// Applications that hide their windows from Accessibility often hide only the
+    /// ones they are not currently showing — a browser publishes the window on the
+    /// Desktop you are standing on and nothing else. Bringing the application
+    /// forward can change what it is willing to publish, so the window that could
+    /// not be raised a moment ago may be raisable now.
+    ///
+    /// This matters because activating an application alone does not travel to
+    /// another Desktop; only raising a window there does. Without it, picking a
+    /// browser window parked on Desktop 3 brought the browser forward where you
+    /// already were.
+    ///
+    /// Best effort by construction: it gives up quietly, and every attempt is
+    /// cheap. Two tries, because the window list is republished asynchronously
+    /// and the first attempt often lands too early.
+    private static func raiseOnceItAppears(_ window: WindowModel, attempt: Int = 0) {
+        let delays: [TimeInterval] = [0.12, 0.35]
+        guard attempt < delays.count else {
+            Log.accessibility.notice(
+                """
+                \(window.appName, privacy: .public) never published window \
+                \(window.id.cgWindowID) — it stays on its own Desktop
+                """
+            )
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + delays[attempt]) {
+            MainActor.assumeIsolated {
+                let appElement = AXUIElementCreateApplication(window.id.pid)
+                AX.setMessagingTimeout(appElement, seconds: 1.0)
+
+                let match = AX.elements(appElement, AXAttribute.windows).first {
+                    AX.windowID(of: $0) == window.id.cgWindowID
+                }
+
+                guard let match else {
+                    raiseOnceItAppears(window, attempt: attempt + 1)
+                    return
+                }
+
+                AX.setBool(match, AXAttribute.main, true)
+                let raised = AX.perform(match, AXAction.raise)
+                Log.accessibility.notice(
+                    """
+                    \(window.appName, privacy: .public) published window \
+                    \(window.id.cgWindowID) after activating; raised=\(raised)
+                    """
+                )
+            }
+        }
     }
 
     // MARK: - Window operations
