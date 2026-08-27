@@ -62,6 +62,11 @@ Displays:        ____________________
 - [ ] **No phantom windows.** Count a browser's entries in the switcher against its
       real windows. The window server lists offscreen scratch windows and tab
       previews too; recovery must not put those in the list.
+- [ ] **A browser window on another Desktop.** With browser windows on two
+      Desktops and *All Spaces* set, pick one from the other Desktop. macOS travels
+      there and that window is frontmost. This is the case where the application
+      publishes nothing to raise, so the Desktop is changed first; the log says
+      `movedToDesktop=true` followed by `published window N after activating`.
 - [ ] **Another Desktop.** With windows on a second Desktop, pick one. macOS
       travels to that Desktop and the window is frontmost. (Requires Desktop &
       Dock → "When switching to an application, switch to a Space with open

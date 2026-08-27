@@ -75,6 +75,22 @@ struct PrivateSymbolsTests {
         )
     }
 
+    /// Without this, a window whose application refuses to publish it over
+    /// Accessibility cannot be reached at all: there is no element to raise, and
+    /// bringing the application forward does not change Desktop.
+    @Test("Desktop switching resolves")
+    func spaceSwitchingResolves() {
+        #expect(
+            PrivateSymbols.canSwitchSpace,
+            """
+            CGSManagedDisplaySetCurrentSpace or CGSCopyManagedDisplayForSpace did \
+            not resolve. Windows on another Desktop belonging to applications that \
+            publish only the frontmost one become unreachable — the app comes \
+            forward and the screen stays put.
+            """
+        )
+    }
+
     @Test("CGSCopyWindowsWithOptionsAndTags resolves")
     func allSpacesEnumerationResolves() {
         #expect(

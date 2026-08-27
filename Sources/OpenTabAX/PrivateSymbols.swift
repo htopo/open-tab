@@ -67,6 +67,15 @@ public enum PrivateSymbols {
     private typealias CGSCopySpacesForWindowsFn =
         @convention(c) (Int32, UInt32, CFArray) -> Unmanaged<CFArray>?
 
+    private typealias CGSCopyManagedDisplayForSpaceFn =
+        @convention(c) (Int32, Int) -> Unmanaged<CFString>?
+
+    /// Declared as returning nothing. Headers in the wild disagree about whether
+    /// it returns void or a `CGError`, and reading a return value that was never
+    /// written is worse than discarding one that was.
+    private typealias CGSManagedDisplaySetCurrentSpaceFn =
+        @convention(c) (Int32, CFString, Int) -> Void
+
     private typealias CGSCopyWindowsWithOptionsAndTagsFn =
         @convention(c) (Int32, UInt32, CFArray?, UInt32,
                         UnsafeMutablePointer<UInt64>, UnsafeMutablePointer<UInt64>) -> Unmanaged<CFArray>?
@@ -90,6 +99,12 @@ public enum PrivateSymbols {
 
     private static let copySpacesForWindowsSym = lookup("CGSCopySpacesForWindows", in: [skyLightHandle])
         .map { unsafeBitCast($0, to: CGSCopySpacesForWindowsFn.self) }
+
+    private static let copyManagedDisplayForSpaceSym = lookup("CGSCopyManagedDisplayForSpace", in: [skyLightHandle])
+        .map { unsafeBitCast($0, to: CGSCopyManagedDisplayForSpaceFn.self) }
+
+    private static let setCurrentSpaceSym = lookup("CGSManagedDisplaySetCurrentSpace", in: [skyLightHandle])
+        .map { unsafeBitCast($0, to: CGSManagedDisplaySetCurrentSpaceFn.self) }
 
     private static let copyWindowsWithOptionsAndTagsSym = lookup("CGSCopyWindowsWithOptionsAndTags", in: [skyLightHandle])
         .map { unsafeBitCast($0, to: CGSCopyWindowsWithOptionsAndTagsFn.self) }
@@ -115,6 +130,15 @@ public enum PrivateSymbols {
     /// When false, `spaceID` is nil everywhere and Space filtering degrades to "all".
     public static var canQueryWindowSpace: Bool {
         (copySpacesForWindowsSym != nil || getWindowWorkspaceSym != nil) && mainConnectionSym != nil
+    }
+
+    /// Whether OpenTab can move the user to another Desktop.
+    ///
+    /// When false, a window on another Desktop that its application refuses to
+    /// publish over Accessibility cannot be reached: the application is brought
+    /// forward and the screen stays where it is.
+    public static var canSwitchSpace: Bool {
+        setCurrentSpaceSym != nil && copyManagedDisplayForSpaceSym != nil && mainConnectionSym != nil
     }
 
     /// Whether windows across every Space can be enumerated.
@@ -158,6 +182,35 @@ public enum PrivateSymbols {
     public static func isSymbolicHotKeyEnabled(_ hotKeyID: Int32) -> Bool? {
         guard let fn = isSymbolicHotKeyEnabledSym else { return nil }
         return fn(hotKeyID)
+    }
+
+    /// Moves the display showing `spaceID` to that Desktop.
+    ///
+    /// The one call in here that *changes* something rather than reading it, and
+    /// the only way to reach a window whose application will not admit it exists.
+    /// Some applications — browsers especially — publish over Accessibility only
+    /// the window on the Desktop currently in front. There is no element to raise
+    /// for the others, activating the application does not travel, and the window
+    /// is unreachable until the Desktop it lives on is the current one. Once it
+    /// is, the application publishes it and an ordinary raise works.
+    ///
+    /// Which display shows a Desktop matters: with "Displays have separate
+    /// Spaces" on, each has its own set, and setting the wrong one moves the wrong
+    /// screen. The display is asked for by Space rather than assumed.
+    ///
+    /// - Returns: false when the symbols are unavailable, which degrades to the
+    ///   behaviour before they were used — the application comes forward and the
+    ///   screen stays put.
+    @discardableResult
+    public static func switchToSpace(_ spaceID: Int) -> Bool {
+        guard let set = setCurrentSpaceSym,
+              let displayFor = copyManagedDisplayForSpaceSym,
+              let cid = mainConnectionID,
+              let display = displayFor(cid, spaceID)?.takeRetainedValue()
+        else { return false }
+
+        set(cid, display, spaceID)
+        return true
     }
 
     /// Returns the Space (workspace) number a window is on, or nil.
@@ -258,6 +311,7 @@ public enum PrivateSymbols {
         CGSSetSymbolicHotKeyEnabled=\(r.symbolicHotKeyControl) \
         CGSIsSymbolicHotKeyEnabled=\(r.symbolicHotKeyRead) \
         CGSCopySpacesForWindows=\(copySpacesForWindowsSym != nil) \
+        CGSManagedDisplaySetCurrentSpace=\(canSwitchSpace) \
         CGSGetWindowWorkspace=\(getWindowWorkspaceSym != nil) \
         CGSCopyWindowsWithOptionsAndTags=\(r.allSpacesEnumeration)
         """

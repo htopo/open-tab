@@ -69,7 +69,9 @@ Hold **⌘** and press **Tab**.
   (Prefer ⇧Tab? Turn off *Controls → Additional controls → Shift steps
   backwards*.)
 - Arrow keys navigate the grid; the mouse works too.
-- Picking a window on another Desktop takes you to that Desktop.
+- Picking a window on another Desktop takes you to that Desktop — including
+  windows their application will not admit to, which is most browser windows that
+  are not in front. See [docs/PRIVATE-SYMBOLS.md](docs/PRIVATE-SYMBOLS.md).
 - Narrowed the list to the current Desktop? Hold the **space bar** to see the
   others: they appear as columns in Desktop order, headed "Desktop 1",
   "Desktop 2", and the selection jumps to the first Desktop that is not the one
