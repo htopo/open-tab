@@ -43,6 +43,7 @@ public enum WindowDiscovery {
     ///   existing registry, so a reconciliation pass does not reset the ordering.
     public static func enumerateAll(
         previousFocusTimes: [WindowID: Date] = [:],
+        knownTitles: [WindowID: String] = [:],
         messagingTimeout: Float = 1.0
     ) -> Result {
         let cgInfo = captureWindowInfo()
@@ -122,7 +123,8 @@ public enum WindowDiscovery {
                 publishedArea: publishedArea,
                 cgInfo: cgInfo,
                 screens: screens,
-                previousFocusTimes: previousFocusTimes
+                previousFocusTimes: previousFocusTimes,
+                knownTitles: knownTitles
             )
 
             guard !recovered.isEmpty else {
@@ -324,7 +326,8 @@ public enum WindowDiscovery {
         publishedArea: CGFloat,
         cgInfo: [CGWindowID: CGWindowRecord],
         screens: ScreenGeometry,
-        previousFocusTimes: [WindowID: Date]
+        previousFocusTimes: [WindowID: Date],
+        knownTitles: [WindowID: String] = [:]
     ) -> [WindowModel] {
         // An app that publishes no window *list* may still answer for its focused
         // window. Worth asking: it costs one call and, when it works, produces
@@ -381,11 +384,21 @@ public enum WindowDiscovery {
                 let id = WindowID(cgWindowID: record.windowID, pid: app.id)
                 let isFocusedOne = focusedID != nil && record.windowID == focusedID
 
-                // `kCGWindowName` is empty without Screen Recording, so the window
-                // server's title is usually unavailable. Accessibility's is not
-                // gated that way, which is why it is preferred when we managed to
-                // get one at all.
-                let title = (isFocusedOne ? focusedTitle : nil) ?? record.title ?? ""
+                // Three sources, best first. Accessibility's title is not gated on
+                // Screen Recording; the window server's `kCGWindowName` is, so it
+                // is usually empty; and failing both, whatever this window was
+                // called the last time anyone could see it.
+                //
+                // That last one carries the common case. An application publishes
+                // the window on the Desktop in front and hides the rest, so which
+                // windows have titles changes as the user moves between Desktops —
+                // and a window that showed its name a moment ago would lose it on
+                // the way out. Remembering costs a dictionary entry and the title
+                // only goes stale if it changes while out of sight.
+                let title = (isFocusedOne ? focusedTitle : nil)
+                    ?? record.title
+                    ?? knownTitles[id]
+                    ?? ""
 
                 return WindowModel(
                     id: id,

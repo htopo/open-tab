@@ -43,6 +43,17 @@ public final class WindowRegistry {
     private var focusedWindowID: WindowID?
     private var focusObservedAt: Date = .distantPast
 
+    /// The last title seen for each window, kept for windows that stop having one.
+    ///
+    /// Applications that publish only the window on the Desktop in front take
+    /// their titles with them when the user moves away, and the window server will
+    /// not supply one without Screen Recording. So a window that read
+    /// "App — Some Document" a moment ago would come back as bare "App" purely
+    /// because the user changed Desktop. Remembering costs a dictionary entry, and
+    /// the only way it can be wrong is if the title changes while nobody can see
+    /// it.
+    private var knownTitles: [WindowID: String] = [:]
+
     /// Applications represented in the list, as of the last time it was logged.
     ///
     /// The list is assembled from two sources — the full enumeration and
@@ -244,6 +255,9 @@ public final class WindowRegistry {
         let liveIDs = Set(merged.map(\.id))
         focusTimes = focusTimes.filter { liveIDs.contains($0.key) }
 
+        rememberTitles(in: merged)
+        knownTitles = knownTitles.filter { liveIDs.contains($0.key) }
+
         applyRecordedFocus(to: &merged, observedAt: observedAt)
 
         guard !onlyIfChanged || windows != merged || apps != previousApps else { return }
@@ -264,12 +278,14 @@ public final class WindowRegistry {
         isReconciling = true
 
         let carriedFocusTimes = focusTimes
+        let carriedTitles = knownTitles
         let timeout = messagingTimeout
         let observedAt = Date()
 
         discoveryQueue.async { [weak self] in
             let result = WindowDiscovery.enumerateAll(
                 previousFocusTimes: carriedFocusTimes,
+                knownTitles: carriedTitles,
                 messagingTimeout: timeout
             )
             Task { @MainActor [weak self] in
@@ -298,6 +314,7 @@ public final class WindowRegistry {
         }
 
         let carriedFocusTimes = focusTimes
+        let carriedTitles = knownTitles
         let timeout = messagingTimeout
         let observedAt = Date()
 
@@ -342,7 +359,8 @@ public final class WindowRegistry {
                     publishedArea: refreshed.map { $0.frame.width * $0.frame.height }.max() ?? 0,
                     cgInfo: cgInfo,
                     screens: screens,
-                    previousFocusTimes: carriedFocusTimes
+                    previousFocusTimes: carriedFocusTimes,
+                    knownTitles: carriedTitles
                 )
             }
 
@@ -367,6 +385,14 @@ public final class WindowRegistry {
             Task { @MainActor [weak self] in
                 self?.replaceWindows(ofPID: pid, with: refreshed, observedAt: observedAt)
             }
+        }
+    }
+
+    /// Files away every title worth remembering, and fills in the ones that are
+    /// missing but were seen before.
+    private func rememberTitles(in list: [WindowModel]) {
+        for window in list where !window.title.isEmpty {
+            knownTitles[window.id] = window.title
         }
     }
 
@@ -438,6 +464,7 @@ public final class WindowRegistry {
         }
 
         applyRecordedFocus(to: &updated, observedAt: observedAt)
+        rememberTitles(in: updated)
 
         guard updated != windows else { return }
         windows = updated
