@@ -127,10 +127,11 @@ public struct WindowModel: Identifiable {
     /// still find Chrome, and someone typing part of a file name must still find
     /// its window, whether or not either is currently on screen. Hiding something
     /// is a display decision, not a change to what exists.
-    public func displayLabel(shortenAppName: Bool, includeWindowTitle: Bool) -> String {
+    public func displayLabel(shortenAppName: Bool, windowTitle: WindowTitleDisplay) -> String {
         let name = AppDisplayName.display(appName, shorten: shortenAppName)
-        guard includeWindowTitle, !title.isEmpty, title != appName else { return name }
-        return "\(name) — \(title)"
+        guard let suffix = WindowTitleFormatter.title(title, appName: appName, display: windowTitle)
+        else { return name }
+        return "\(name) — \(suffix)"
     }
 
     /// Text matched against when the user types to filter.

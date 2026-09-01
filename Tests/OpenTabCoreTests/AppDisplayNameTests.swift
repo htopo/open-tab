@@ -72,17 +72,26 @@ struct WindowLabelTests {
         )
     }
 
-    @Test("Both settings on gives the full label")
+    @Test("Full shows the title as the application wrote it")
     func fullLabel() {
         let w = window(app: "Google Chrome", title: "Inbox")
-        #expect(w.displayLabel(shortenAppName: true, includeWindowTitle: true) == "Chrome — Inbox")
+        #expect(w.displayLabel(shortenAppName: true, windowTitle: .full) == "Chrome — Inbox")
     }
 
-    @Test("Titles off leaves the application name alone")
+    @Test("Off leaves the application name alone")
     func titleSuppressed() {
         let w = window(app: "Google Chrome", title: "Inbox")
-        #expect(w.displayLabel(shortenAppName: true, includeWindowTitle: false) == "Chrome")
-        #expect(w.displayLabel(shortenAppName: false, includeWindowTitle: false) == "Google Chrome")
+        #expect(w.displayLabel(shortenAppName: true, windowTitle: .hidden) == "Chrome")
+        #expect(w.displayLabel(shortenAppName: false, windowTitle: .hidden) == "Google Chrome")
+    }
+
+    /// The case that prompted the setting: an editor's title is the file, its
+    /// state, and then the project. Only the project distinguishes two of its
+    /// windows; the file is what the user is choosing *between*, not by.
+    @Test("Last part keeps the project and drops the file")
+    func lastPartOfAnEditorTitle() {
+        let w = window(app: "Cursor", title: "index.mdx (Working Tree) (index.mdx) — horizon")
+        #expect(w.displayLabel(shortenAppName: true, windowTitle: .lastComponent) == "Cursor — horizon")
     }
 
     /// A window whose title merely repeats the application name adds nothing, so
@@ -90,13 +99,14 @@ struct WindowLabelTests {
     @Test("A title that repeats the app name is not appended")
     func redundantTitleIsDropped() {
         let w = window(app: "Notes", title: "Notes")
-        #expect(w.displayLabel(shortenAppName: true, includeWindowTitle: true) == "Notes")
+        #expect(w.displayLabel(shortenAppName: true, windowTitle: .full) == "Notes")
+        #expect(w.displayLabel(shortenAppName: true, windowTitle: .lastComponent) == "Notes")
     }
 
     @Test("An empty title is not appended")
     func emptyTitleIsDropped() {
         let w = window(app: "Preview", title: "")
-        #expect(w.displayLabel(shortenAppName: true, includeWindowTitle: true) == "Preview")
+        #expect(w.displayLabel(shortenAppName: true, windowTitle: .full) == "Preview")
     }
 
     /// Hiding a title is a display decision. Someone typing "google" must still
@@ -106,5 +116,74 @@ struct WindowLabelTests {
         let w = window(app: "Google Chrome", title: "Inbox")
         #expect(w.searchableText.contains("Google"))
         #expect(w.searchableText.contains("Inbox"))
+    }
+}
+
+/// Reducing a title to its last component.
+///
+/// Titles are written most-specific-first, so the tail is what tells two windows
+/// of one application apart and the head is the document being chosen *between*.
+/// Every fixture here is a real title taken from a running machine.
+@Suite("Window title trimming")
+struct WindowTitleFormatterTests {
+
+    @Test("An editor's project survives, the file does not")
+    func editorTitle() {
+        #expect(WindowTitleFormatter.lastComponent(
+            of: "index.mdx (Working Tree) (index.mdx) — horizon", appName: "Cursor"
+        ) == "horizon")
+
+        #expect(WindowTitleFormatter.lastComponent(
+            of: "collaborator-interview-robustness.canvas.tsx — horizon [SSH: mac-mini]",
+            appName: "Cursor"
+        ) == "horizon [SSH: mac-mini]")
+    }
+
+    /// A browser writes page, then itself, then the profile. Two profiles are
+    /// exactly what makes two of its windows different.
+    @Test("A browser's profile survives")
+    func browserTitle() {
+        #expect(WindowTitleFormatter.lastComponent(
+            of: "Inbox (3,998) - htrnbs@gmail.com - Gmail - Google Chrome - Hernán",
+            appName: "Google Chrome"
+        ) == "Hernán")
+    }
+
+    /// Plenty of applications end their titles with their own name, which the row
+    /// already shows in larger type.
+    @Test("A trailing application name is stepped over")
+    func trailingAppNameIsSkipped() {
+        #expect(WindowTitleFormatter.lastComponent(
+            of: "agente-ofertas (Channel) - AI R&D - Slack", appName: "Slack"
+        ) == "AI R&D")
+    }
+
+    @Test("A title with no separator is left whole")
+    func singleComponentTitle() {
+        #expect(WindowTitleFormatter.lastComponent(of: "Untitled", appName: "TextEdit") == "Untitled")
+    }
+
+    /// All three separators appear in practice, and which one an application chose
+    /// says nothing about what it put on either side.
+    @Test("Em dash, en dash and hyphen all count")
+    func allSeparators() {
+        #expect(WindowTitleFormatter.lastComponent(of: "a — b", appName: "X") == "b")
+        #expect(WindowTitleFormatter.lastComponent(of: "a – b", appName: "X") == "b")
+        #expect(WindowTitleFormatter.lastComponent(of: "a - b", appName: "X") == "b")
+    }
+
+    /// A hyphen inside a word is not a separator; only a spaced one is.
+    @Test("Hyphenated words are not split")
+    func hyphenInsideAWordIsNotASeparator() {
+        #expect(WindowTitleFormatter.lastComponent(
+            of: "well-known-file.txt", appName: "TextEdit"
+        ) == "well-known-file.txt")
+    }
+
+    @Test("Nothing worth adding returns nil")
+    func nothingToAdd() {
+        #expect(WindowTitleFormatter.title("", appName: "Preview", display: .full) == nil)
+        #expect(WindowTitleFormatter.title("Notes", appName: "Notes", display: .full) == nil)
+        #expect(WindowTitleFormatter.title("x", appName: "Preview", display: .hidden) == nil)
     }
 }

@@ -83,14 +83,15 @@ public struct AdvancedAppearanceSettings: Codable, Equatable, Sendable {
     public var cellPadding: Double
     public var titleFontSize: Double
 
-    /// Whether the window's own title is shown next to the application name.
+    /// How much of the window's own title is shown next to the application name.
     ///
-    /// Off by default. A window title is the most specific thing on a row and also
-    /// the longest — an editor's runs to the file, its state and the project — and
-    /// most switches are to an application rather than to one of its windows. It
-    /// earns its place when several windows of one application are open, which is
-    /// exactly when someone will come looking for this switch.
-    public var showWindowTitle: Bool
+    /// Defaults to the last part. A full title is the most specific thing on a row
+    /// and by far the longest — an editor's carries the file, its state and the
+    /// project — while nothing at all leaves several windows of one application
+    /// indistinguishable. The tail is the part that separates them: applications
+    /// write titles most-specific-first, so the end is the project, folder or
+    /// profile and the beginning is the document you are not choosing by.
+    public var windowTitle: WindowTitleDisplay
 
     /// Drop the publisher from application names: "Google Chrome" reads "Chrome".
     public var shortenApplicationNames: Bool
@@ -110,7 +111,7 @@ public struct AdvancedAppearanceSettings: Codable, Equatable, Sendable {
         showAppIconBadge: Bool = true,
         showWindowCountBadge: Bool = true,
         showStatusBadges: Bool = true,
-        showWindowTitle: Bool = false,
+        windowTitle: WindowTitleDisplay = .lastComponent,
         shortenApplicationNames: Bool = true,
         highlightStyle: HighlightStyle = .fill
     ) {
@@ -123,7 +124,7 @@ public struct AdvancedAppearanceSettings: Codable, Equatable, Sendable {
         self.showAppIconBadge = showAppIconBadge
         self.showWindowCountBadge = showWindowCountBadge
         self.showStatusBadges = showStatusBadges
-        self.showWindowTitle = showWindowTitle
+        self.windowTitle = windowTitle
         self.shortenApplicationNames = shortenApplicationNames
         self.highlightStyle = highlightStyle
     }
@@ -140,17 +141,32 @@ public struct AdvancedAppearanceSettings: Codable, Equatable, Sendable {
         showAppIconBadge = c.value(.showAppIconBadge, d.showAppIconBadge)
         showWindowCountBadge = c.value(.showWindowCountBadge, d.showWindowCountBadge)
         showStatusBadges = c.value(.showStatusBadges, d.showStatusBadges)
-        showWindowTitle = c.value(.showWindowTitle, d.showWindowTitle)
+        // Was a Bool before there was a middle setting. Map the old values rather
+        // than dropping them: someone who had turned titles off meant off, and
+        // silently restoring a default they had rejected is worse than a rename.
+        let legacy = try? decoder.container(keyedBy: RetiredKeys.self)
+            .decode(Bool.self, forKey: .showWindowTitle)
+        if let legacy {
+            windowTitle = legacy ? .full : .hidden
+        } else {
+            windowTitle = c.value(.windowTitle, d.windowTitle)
+        }
         shortenApplicationNames = c.value(.shortenApplicationNames, d.shortenApplicationNames)
         highlightStyle = c.value(.highlightStyle, d.highlightStyle)
+    }
+
+    /// Keys that used to exist, read only for migration.
+    private enum RetiredKeys: String, CodingKey {
+        /// A Bool where `windowTitle` now sits.
+        case showWindowTitle
     }
 
     public static let `default` = AdvancedAppearanceSettings()
 
     public static let windowTitleExplanation = """
-        Adds the window's own name beside the application's. Useful when several \
-        windows of one application are open, and long: an editor's title carries \
-        the file and the project.
+        Applications write titles most-specific-first, so the last part is usually \
+        the project, folder or profile — the bit that tells two windows apart — \
+        and the beginning is the document you are not choosing by.
         """
 
     public static let shortenNamesExplanation = """

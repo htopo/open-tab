@@ -233,10 +233,11 @@ struct AdvancedAppearanceSheet: View {
                         }
                         SettingsRow(
                             "appearance.advanced.windowTitle",
-                            "Show window titles",
+                            "Window titles",
                             subtitle: AdvancedAppearanceSettings.windowTitleExplanation
                         ) {
-                            Toggle("", isOn: $settings.showWindowTitle).labelsHidden()
+                            EnumPicker(selection: $settings.windowTitle,
+                                       options: WindowTitleDisplay.allCases.map { ($0, $0.displayName) })
                         }
                         SettingsRow(
                             "appearance.advanced.shortenAppNames",

@@ -342,9 +342,10 @@ private struct ThumbnailCell: View {
             // With window titles off the caption falls back to the application
             // name rather than disappearing: a grid of previews with nothing
             // written under them is harder to read, not cleaner.
-            Text(advanced.showWindowTitle
-                 ? window.displayTitle
-                 : AppDisplayName.display(window.appName, shorten: advanced.shortenApplicationNames))
+            Text(window.displayLabel(
+                shortenAppName: advanced.shortenApplicationNames,
+                windowTitle: advanced.windowTitle
+            ))
                 .font(.system(size: advanced.titleFontSize))
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -459,7 +460,7 @@ struct AppIconsStyleView: View {
             if windows.indices.contains(localSelection) {
                 Text(windows[localSelection].displayLabel(
                     shortenAppName: model.appearance.advanced.shortenApplicationNames,
-                    includeWindowTitle: model.appearance.advanced.showWindowTitle
+                    windowTitle: model.appearance.advanced.windowTitle
                 ))
                     .font(.system(size: model.appearance.advanced.titleFontSize + 1, weight: .medium))
                     .lineLimit(1)
@@ -518,13 +519,15 @@ struct TitlesStyleView: View {
                         .lineLimit(1)
                         .layoutPriority(1)
 
-                    if model.appearance.advanced.showWindowTitle,
-                       !window.title.isEmpty,
-                       window.title != window.appName {
+                    if let suffix = WindowTitleFormatter.title(
+                        window.title,
+                        appName: window.appName,
+                        display: model.appearance.advanced.windowTitle
+                    ) {
                         Text("—")
                             .font(.system(size: model.appearance.advanced.titleFontSize))
                             .foregroundStyle(.tertiary)
-                        Text(window.title)
+                        Text(suffix)
                             .font(.system(size: model.appearance.advanced.titleFontSize + 1))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
