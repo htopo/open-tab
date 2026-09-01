@@ -121,6 +121,18 @@ public struct WindowModel: Identifiable {
         return "\(appName) — \(title)"
     }
 
+    /// The label for this window, as the appearance settings ask for it.
+    ///
+    /// Search deliberately does not go through this: someone typing "google" must
+    /// still find Chrome, and someone typing part of a file name must still find
+    /// its window, whether or not either is currently on screen. Hiding something
+    /// is a display decision, not a change to what exists.
+    public func displayLabel(shortenAppName: Bool, includeWindowTitle: Bool) -> String {
+        let name = AppDisplayName.display(appName, shorten: shortenAppName)
+        guard includeWindowTitle, !title.isEmpty, title != appName else { return name }
+        return "\(name) — \(title)"
+    }
+
     /// Text matched against when the user types to filter.
     public var searchableText: String {
         "\(appName) \(title)"

@@ -231,8 +231,19 @@ struct AdvancedAppearanceSheet: View {
                                 String(format: "%.0f pt", $0)
                             }
                         }
-                        SettingsRow("appearance.advanced.windowTitle", "Show window title") {
+                        SettingsRow(
+                            "appearance.advanced.windowTitle",
+                            "Show window titles",
+                            subtitle: AdvancedAppearanceSettings.windowTitleExplanation
+                        ) {
                             Toggle("", isOn: $settings.showWindowTitle).labelsHidden()
+                        }
+                        SettingsRow(
+                            "appearance.advanced.shortenAppNames",
+                            "Shorten application names",
+                            subtitle: AdvancedAppearanceSettings.shortenNamesExplanation
+                        ) {
+                            Toggle("", isOn: $settings.shortenApplicationNames).labelsHidden()
                         }
                         SettingsRow("appearance.advanced.appIconBadge", "Show app icon on thumbnails") {
                             Toggle("", isOn: $settings.showAppIconBadge).labelsHidden()

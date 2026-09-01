@@ -104,8 +104,10 @@ public enum SettingsRegistry {
               keywords: ["badge", "number", "count", "grouped"]),
         .init(id: "appearance.advanced.statusBadges", title: "Show minimized and hidden badges", pane: .appearance, section: "Customize more",
               keywords: ["badge", "indicator", "minimized", "hidden", "fullscreen", "status"]),
-        .init(id: "appearance.advanced.windowTitle", title: "Show window title under thumbnail", pane: .appearance, section: "Customize more",
-              keywords: ["label", "caption", "name", "text"]),
+        .init(id: "appearance.advanced.windowTitle", title: "Show window titles", pane: .appearance, section: "Customize more",
+              keywords: ["label", "caption", "name", "text", "file name", "document", "title"]),
+        .init(id: "appearance.advanced.shortenAppNames", title: "Shorten application names", pane: .appearance, section: "Customize more",
+              keywords: ["short", "publisher", "vendor", "google", "chrome", "microsoft", "prefix", "name"]),
         .init(id: "appearance.advanced.highlightStyle", title: "Highlight style", pane: .appearance, section: "Customize more",
               keywords: ["selection", "border", "fill", "outline", "marker"]),
     ]

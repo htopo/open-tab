@@ -83,10 +83,21 @@ public struct AdvancedAppearanceSettings: Codable, Equatable, Sendable {
     public var cellPadding: Double
     public var titleFontSize: Double
 
+    /// Whether the window's own title is shown next to the application name.
+    ///
+    /// Off by default. A window title is the most specific thing on a row and also
+    /// the longest — an editor's runs to the file, its state and the project — and
+    /// most switches are to an application rather than to one of its windows. It
+    /// earns its place when several windows of one application are open, which is
+    /// exactly when someone will come looking for this switch.
+    public var showWindowTitle: Bool
+
+    /// Drop the publisher from application names: "Google Chrome" reads "Chrome".
+    public var shortenApplicationNames: Bool
+
     public var showAppIconBadge: Bool
     public var showWindowCountBadge: Bool
     public var showStatusBadges: Bool
-    public var showWindowTitle: Bool
     public var highlightStyle: HighlightStyle
 
     public init(
@@ -99,7 +110,8 @@ public struct AdvancedAppearanceSettings: Codable, Equatable, Sendable {
         showAppIconBadge: Bool = true,
         showWindowCountBadge: Bool = true,
         showStatusBadges: Bool = true,
-        showWindowTitle: Bool = true,
+        showWindowTitle: Bool = false,
+        shortenApplicationNames: Bool = true,
         highlightStyle: HighlightStyle = .fill
     ) {
         self.maxRows = maxRows
@@ -112,6 +124,7 @@ public struct AdvancedAppearanceSettings: Codable, Equatable, Sendable {
         self.showWindowCountBadge = showWindowCountBadge
         self.showStatusBadges = showStatusBadges
         self.showWindowTitle = showWindowTitle
+        self.shortenApplicationNames = shortenApplicationNames
         self.highlightStyle = highlightStyle
     }
 
@@ -128,10 +141,21 @@ public struct AdvancedAppearanceSettings: Codable, Equatable, Sendable {
         showWindowCountBadge = c.value(.showWindowCountBadge, d.showWindowCountBadge)
         showStatusBadges = c.value(.showStatusBadges, d.showStatusBadges)
         showWindowTitle = c.value(.showWindowTitle, d.showWindowTitle)
+        shortenApplicationNames = c.value(.shortenApplicationNames, d.shortenApplicationNames)
         highlightStyle = c.value(.highlightStyle, d.highlightStyle)
     }
 
     public static let `default` = AdvancedAppearanceSettings()
+
+    public static let windowTitleExplanation = """
+        Adds the window's own name beside the application's. Useful when several \
+        windows of one application are open, and long: an editor's title carries \
+        the file and the project.
+        """
+
+    public static let shortenNamesExplanation = """
+        Drops the publisher, so "Google Chrome" reads "Chrome".
+        """
 }
 
 /// The Appearance pane.

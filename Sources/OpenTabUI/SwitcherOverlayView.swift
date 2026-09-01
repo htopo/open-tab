@@ -339,14 +339,17 @@ private struct ThumbnailCell: View {
                 }
             }
 
-            if advanced.showWindowTitle {
-                Text(window.displayTitle)
-                    .font(.system(size: advanced.titleFontSize))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(width: metrics.thumbnailWidth)
-                    .foregroundStyle(isSelected ? Color.primary : Color.secondary)
-            }
+            // With window titles off the caption falls back to the application
+            // name rather than disappearing: a grid of previews with nothing
+            // written under them is harder to read, not cleaner.
+            Text(advanced.showWindowTitle
+                 ? window.displayTitle
+                 : AppDisplayName.display(window.appName, shorten: advanced.shortenApplicationNames))
+                .font(.system(size: advanced.titleFontSize))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(width: metrics.thumbnailWidth)
+                .foregroundStyle(isSelected ? Color.primary : Color.secondary)
         }
         .padding(5)
         .background(SelectionBackground(isSelected: isSelected, style: advanced.highlightStyle))
@@ -454,7 +457,10 @@ struct AppIconsStyleView: View {
             // per column would repeat the same name across the panel.
             let localSelection = model.selection - offset
             if windows.indices.contains(localSelection) {
-                Text(windows[localSelection].qualifiedTitle)
+                Text(windows[localSelection].displayLabel(
+                    shortenAppName: model.appearance.advanced.shortenApplicationNames,
+                    includeWindowTitle: model.appearance.advanced.showWindowTitle
+                ))
                     .font(.system(size: model.appearance.advanced.titleFontSize + 1, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -503,13 +509,18 @@ struct TitlesStyleView: View {
                                    height: metrics.titleRowHeight - 10)
                     }
 
-                    Text(window.appName)
+                    Text(AppDisplayName.display(
+                        window.appName,
+                        shorten: model.appearance.advanced.shortenApplicationNames
+                    ))
                         .font(.system(size: model.appearance.advanced.titleFontSize + 1,
                                       weight: .medium))
                         .lineLimit(1)
                         .layoutPriority(1)
 
-                    if !window.title.isEmpty, window.title != window.appName {
+                    if model.appearance.advanced.showWindowTitle,
+                       !window.title.isEmpty,
+                       window.title != window.appName {
                         Text("—")
                             .font(.system(size: model.appearance.advanced.titleFontSize))
                             .foregroundStyle(.tertiary)
