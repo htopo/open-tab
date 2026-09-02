@@ -50,6 +50,10 @@ final class OverlayPanel {
     /// and does nothing.
     private var visibility = 0
 
+    /// The current generation, for a caller that wants to know later whether the
+    /// panel it put up is still the panel on screen.
+    var visibilityGeneration: Int { visibility }
+
     init() {
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),

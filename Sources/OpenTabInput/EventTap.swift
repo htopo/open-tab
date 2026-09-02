@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 import Foundation
 import OpenTabCore
+import os
 
 /// The keyboard event tap.
 ///
@@ -39,6 +40,18 @@ public final class EventTap {
 
     /// Modifier state at the previous event. Tap-thread only; see `handle`.
     private var lastFlags: CGEventFlags = []
+
+    /// How many events the tap has been handed, ever.
+    ///
+    /// This is the one number that separates "the switcher ignored the shortcut"
+    /// from "the shortcut never reached the switcher" — and from outside the tap
+    /// those two look identical, because a tap that has quietly stopped
+    /// delivering behaves exactly like a matcher that declined every event.
+    /// Without it, a report of "⌘Tab did nothing" leaves no trace at all in the
+    /// log: there is no line for an event that never arrived.
+    private let eventCounter = OSAllocatedUnfairLock(initialState: UInt64(0))
+
+    public var eventsSeen: UInt64 { eventCounter.withLock { $0 } }
 
     public init(
         handler: @escaping Handler,
@@ -217,6 +230,8 @@ public final class EventTap {
 
     /// Runs on the tap thread. Must stay fast and must never block.
     private func handle(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+
+        eventCounter.withLock { $0 &+= 1 }
 
         // macOS disables a tap whose callback overran its deadline, and tells us
         // by sending this. Re-enabling is the only way back; without it the

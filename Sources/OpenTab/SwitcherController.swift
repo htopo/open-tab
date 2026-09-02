@@ -79,6 +79,26 @@ final class SwitcherController {
     /// Drives the repeat while ⇧ is held down. See `beginShiftRepeat`.
     private var shiftRepeatTimer: Timer?
 
+    /// Watches the input layer for the two failures that are otherwise silent.
+    /// See `checkInputHealth`.
+    private var watchdogTimer: Timer?
+
+    /// When the active interaction's modifiers were first seen to be up.
+    /// nil whenever they are down, or no interaction is running.
+    private var modifiersUpSince: Date?
+
+    /// Last value handed to the tap, so only changes are logged.
+    private var isPassingShortcutsThrough = false
+
+    /// How often the input layer is checked. Two calls, both cheap: one mach
+    /// port query and one read of the current modifier state.
+    private static let watchdogInterval: TimeInterval = 2
+
+    /// How long an interaction may sit with its modifiers already released
+    /// before it is treated as stranded. Long enough that no real release can
+    /// be mistaken for one — a release the tap did see commits in milliseconds.
+    private static let strandedGrace: TimeInterval = 1
+
     /// How long a release of the space bar waits before narrowing the list again.
     ///
     /// Releasing ⌘ and the space bar together is one gesture to the user, but the
@@ -181,9 +201,12 @@ final class SwitcherController {
         observeFrontmostApplication()
         gestures.update(settings: gestureSettings)
         applyConfiguration()
+        startWatchdog()
     }
 
     func stop() {
+        watchdogTimer?.invalidate()
+        watchdogTimer = nil
         holdTimer?.invalidate()
         holdTimer = nil
         collapseTimer?.invalidate()
@@ -252,6 +275,96 @@ final class SwitcherController {
         gestures.update(settings: newGesture)
     }
 
+    // MARK: - Input health
+
+    /// Starts the periodic check on the input layer.
+    ///
+    /// Both failures it looks for share one property that makes them worth
+    /// polling for: they leave no trace. A shortcut that never arrives writes
+    /// nothing to the log, because every line the switcher emits is written by
+    /// code that only runs once the event has already reached it. So the only
+    /// way to see either is to go and look.
+    private func startWatchdog() {
+        watchdogTimer?.invalidate()
+        let timer = Timer.scheduledTimer(withTimeInterval: Self.watchdogInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkInputHealth() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        watchdogTimer = timer
+    }
+
+    private func checkInputHealth() {
+        // A disabled tap announces itself by delivering a `.tapDisabledBy…`
+        // event, which the tap re-enables on. That is the path that works. The
+        // path that does not is a tap disabled while it is not delivering
+        // anything — nothing arrives to announce it, and ⌘Tab is simply dead
+        // until something else happens to call this. Until now the only
+        // somethings were waking from sleep and a display change.
+        tap?.revalidate()
+        recoverStrandedInteraction()
+    }
+
+    /// Ends an interaction whose modifiers are demonstrably no longer held.
+    ///
+    /// The switcher stays open for as long as its modifiers are down, and it
+    /// learns they came up from a `.flagsChanged` event. That event is not
+    /// guaranteed: another process's tap sits ahead of ours in the chain and
+    /// may consume it, and a tap that is briefly disabled misses whatever
+    /// passed while it was.
+    ///
+    /// The interaction is then stranded, and the symptom is not a visible stuck
+    /// panel — it is ⌘Tab appearing to do nothing at all. The machine reads the
+    /// next press as "advance the selection" of a session the user abandoned,
+    /// so no list is built and no window is focused.
+    ///
+    /// The physical modifier state is readable without an event, which is what
+    /// makes the repair possible: `flagsState` asks the window server what is
+    /// held right now rather than replaying what we were told.
+    private func recoverStrandedInteraction() {
+        let index: Int
+        switch machine.state {
+        case .idle, .searching:
+            // Searching releases the modifiers on purpose — that is what puts
+            // the keyboard into the search field.
+            modifiersUpSince = nil
+            return
+        case .armed(let shortcut), .visible(let shortcut):
+            index = shortcut
+        }
+
+        // "Hold" keeps the panel up after release by design.
+        guard afterRelease == .focus, shortcuts.indices.contains(index) else {
+            modifiersUpSince = nil
+            return
+        }
+
+        let held = ModifierSet(eventFlags: CGEventSource.flagsState(.combinedSessionState))
+        guard held.isDisjoint(with: shortcuts[index].combo.modifiers) else {
+            modifiersUpSince = nil
+            return
+        }
+
+        guard let since = modifiersUpSince else {
+            modifiersUpSince = Date()
+            return
+        }
+        guard Date().timeIntervalSince(since) >= Self.strandedGrace else { return }
+        modifiersUpSince = nil
+
+        // Logged as an error with the tap's event count: a count that is still
+        // climbing says the tap is alive and this one event was lost, and a
+        // frozen one says the tap has stopped delivering entirely. Those are
+        // different bugs with the same symptom.
+        Log.input.error(
+            """
+            Interaction stranded: modifiers released without an event reaching us. \
+            Recovering. state=\(String(describing: self.machine.state), privacy: .public) \
+            tapEvents=\(self.tap?.eventsSeen ?? 0)
+            """
+        )
+        for effect in machine.abandon() { apply(effect) }
+    }
+
     // MARK: - Exceptions
 
     /// Recomputes whether the tap should pass everything through, and caches the
@@ -278,10 +391,18 @@ final class SwitcherController {
             config.passThroughEverything = shouldPassThrough
         }
 
+        // Both edges, at notice rather than debug. While this is on, the tap
+        // declines every event before any other rule runs, so a value that got
+        // stuck on would look exactly like a switcher that had stopped
+        // existing — and the log would say nothing either way.
+        guard shouldPassThrough != isPassingShortcutsThrough else { return }
+        isPassingShortcutsThrough = shouldPassThrough
+
+        let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?"
         if shouldPassThrough {
-            Log.input.debug(
-                "Passing shortcuts through to \(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?", privacy: .public)"
-            )
+            Log.input.notice("Passing shortcuts through to \(frontmost, privacy: .public)")
+        } else {
+            Log.input.notice("Claiming shortcuts again; frontmost is \(frontmost, privacy: .public)")
         }
     }
 
@@ -813,10 +934,17 @@ final class SwitcherController {
         // Alpha is checked after the fade should have finished, not before it
         // starts: a panel that is up, correctly sized, and invisible is the one
         // failure mode this surface has that looks like nothing happening at all.
+        //
+        // Tied to the generation of the panel this call put up. A switch short
+        // enough to commit before the fade finishes — a quick ⌘Tab — is already
+        // fading back out when the check lands, and an alpha on its way to zero
+        // was being reported as the very bug this is here to catch.
         let expected = fadeInDuration
+        let generation = panel.visibilityGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + expected + 0.05) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.panel.isVisible else { return }
+                guard self.panel.visibilityGeneration == generation else { return }
                 guard self.panel.alphaForLogging < 0.95 else { return }
                 Log.overlay.error(
                     "Overlay is on screen but transparent: alpha=\(self.panel.alphaForLogging)"

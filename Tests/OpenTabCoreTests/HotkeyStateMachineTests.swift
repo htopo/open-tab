@@ -426,6 +426,59 @@ struct HotkeyStateMachineTests {
         #expect(machine.state == .idle)
     }
 
+    // MARK: - Abandoning
+
+    /// The recovery path for an interaction whose modifier release never
+    /// arrived. It has to work regardless of the escape preference: that
+    /// preference is about what the user meant by pressing a key, and nothing
+    /// here was pressed.
+    @Test("Abandoning ends the interaction even when Escape is set not to cancel")
+    func abandonIgnoresTheEscapePreference() {
+        var machine = makeMachine(escapeCancels: false)
+        _ = machine.handle(.triggerPressed(shortcut: 0, reversed: false))
+        _ = machine.handle(.holdThresholdElapsed)
+        #expect(machine.handle(.cancelled).isEmpty, "precondition: Escape is vetoed")
+
+        let effects = machine.abandon()
+        #expect(machine.state == .idle)
+        #expect(machine.selection == 0)
+        #expect(effects.contains(.hideOverlay))
+        #expect(effects.contains(.cancel))
+    }
+
+    /// Nothing was chosen, so nothing may be focused. Committing a selection the
+    /// user walked away from would raise a window seconds after they stopped
+    /// looking at the switcher.
+    @Test("Abandoning never commits a selection")
+    func abandonDoesNotCommit() {
+        var machine = makeMachine()
+        _ = machine.handle(.triggerPressed(shortcut: 0, reversed: false))
+        _ = machine.handle(.holdThresholdElapsed)
+        _ = machine.handle(.navigate(delta: 2))
+
+        let effects = machine.abandon()
+        #expect(!effects.contains(where: { if case .commitSelection = $0 { return true }; return false }))
+    }
+
+    /// The hold timer outlives the state it belongs to unless something stops
+    /// it, and would then show a panel for an interaction that has ended.
+    @Test("Abandoning an armed interaction stops the hold timer")
+    func abandonCancelsTheHoldTimer() {
+        var machine = makeMachine()
+        _ = machine.handle(.triggerPressed(shortcut: 0, reversed: false))
+        #expect(machine.state == .armed(shortcut: 0))
+
+        #expect(machine.abandon().contains(.cancelHoldTimer))
+        #expect(machine.state == .idle)
+    }
+
+    @Test("Abandoning while idle does nothing")
+    func abandonWhileIdleIsInert() {
+        var machine = makeMachine()
+        #expect(machine.abandon().isEmpty)
+        #expect(machine.state == .idle)
+    }
+
     @Test("A full interaction returns to idle with the selection reset")
     func fullCycleReturnsToIdle() {
         var machine = makeMachine()

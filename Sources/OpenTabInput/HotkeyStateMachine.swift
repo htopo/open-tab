@@ -300,6 +300,22 @@ public struct HotkeyStateMachine {
         }
     }
 
+    /// Abandons the interaction unconditionally.
+    ///
+    /// Distinct from `.cancelled`, which the user's "Escape closes the switcher"
+    /// preference is allowed to veto. This is the host saying the outside world
+    /// has made the current state impossible — the shortcut's modifiers are
+    /// provably no longer held, say — and there is nothing for the user to
+    /// prefer about that. Cancelling rather than committing is deliberate:
+    /// acting seconds late on a choice the user has already walked away from
+    /// would raise a window out of nowhere.
+    public mutating func abandon() -> [HotkeyEffect] {
+        guard state != .idle else { return [] }
+        state = .idle
+        selection = 0
+        return [.cancelHoldTimer, .hideOverlay, .cancel]
+    }
+
     // MARK: - Shared transitions
 
     private mutating func commit() -> [HotkeyEffect] {
