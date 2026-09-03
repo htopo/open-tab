@@ -53,6 +53,31 @@ public final class EventTap {
 
     public var eventsSeen: UInt64 { eventCounter.withLock { $0 } }
 
+    /// Tracks the hand-off from the tap thread to the main actor.
+    ///
+    /// Swallowing is decided here, on the tap thread; acting on the event is
+    /// the main actor's job. Only the first of those is guaranteed to happen.
+    /// A main actor stuck in a synchronous system call - a TCC probe, an
+    /// Accessibility call to an application that has stopped answering - leaves
+    /// the keystroke consumed and nothing done with it. That is a switcher that
+    /// ignores the shortcut and cannot say why, because every line it logs is
+    /// written by main-actor code.
+    private struct HandOff {
+        var pending = 0
+        /// When the oldest unhandled hand-off was made. Reset to now on each
+        /// acknowledgement rather than tracking every event's own timestamp,
+        /// which errs towards reporting a stall as shorter than it was.
+        var oldestPendingAt: DispatchTime?
+    }
+
+    private let handOff = OSAllocatedUnfairLock(initialState: HandOff())
+
+    /// How long the main actor may leave an event unhandled before it is worth
+    /// a line in the log. Two events arriving in the same instant and both
+    /// dispatched before either is handled is ordinary; a quarter of a second
+    /// is not.
+    private static let handOffStallThreshold: Double = 250
+
     public init(
         handler: @escaping Handler,
         onUnavailable: @escaping @MainActor (InputUnavailableReason) -> Void
@@ -274,11 +299,42 @@ public final class EventTap {
         )
 
         if outcome != .ignore {
+            noteDispatch()
             let handler = self.handler
-            Task { @MainActor in handler(outcome) }
+            let handOff = self.handOff
+            Task { @MainActor in
+                // Acknowledged before the handler runs: this measures how long
+                // the hand-off waited, not how long the work took.
+                handOff.withLock { state in
+                    state.pending = max(0, state.pending - 1)
+                    state.oldestPendingAt = state.pending > 0 ? .now() : nil
+                }
+                handler(outcome)
+            }
         }
 
         return outcome.swallowsEvent ? nil : Unmanaged.passUnretained(event)
+    }
+
+    /// Records a hand-off, and reports a main actor that is not draining them.
+    ///
+    /// Runs on the tap thread, which is the whole point: this is the one place
+    /// that still gets to speak while the main actor is wedged.
+    private func noteDispatch() {
+        let stalled: (waited: Double, count: Int)? = handOff.withLock { state in
+            let age = state.oldestPendingAt.map {
+                Double(DispatchTime.now().uptimeNanoseconds - $0.uptimeNanoseconds) / 1_000_000
+            }
+            state.pending += 1
+            if state.oldestPendingAt == nil { state.oldestPendingAt = .now() }
+            guard let age, age > Self.handOffStallThreshold else { return nil }
+            return (age, state.pending)
+        }
+
+        guard let stalled else { return }
+        Log.input.error(
+            "Main actor has not handled \(stalled.count) dispatched events; oldest waiting \(stalled.waited, format: .fixed(precision: 0))ms. The shortcut has been consumed and cannot be acted on until it frees up."
+        )
     }
 
     /// C trampoline back into Swift.

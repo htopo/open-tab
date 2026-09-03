@@ -5,10 +5,19 @@ import Observation
 /// The permission state OpenTab cares about, kept current.
 ///
 /// macOS sends no notification when a TCC grant changes, so the only way to
-/// notice the user ticking a checkbox in System Settings is to poll. Polling is
-/// cheap — both checks are process-local — but it is only worth doing while
-/// something is actually missing, so the timer stops once everything is granted
-/// and restarts if a grant is revoked.
+/// notice the user ticking a checkbox in System Settings is to poll. The timer
+/// runs only while something is actually missing, so it stops once everything
+/// is granted and restarts if a grant is revoked.
+///
+/// **The probes are not the cheap process-local reads they look like.**
+/// `CGPreflightScreenCaptureAccess` is a synchronous IPC to `tccd`, so how long
+/// a poll takes is up to a system daemon. Running it on the main thread made
+/// the switcher's responsiveness depend on that: while the main actor waited
+/// for an answer, the event tap had already swallowed ⌘Tab — swallowing is
+/// decided on the tap thread, before the handler runs — so the shortcut did
+/// nothing, showed nothing, and logged nothing, because every line the switcher
+/// writes is written by main-actor code. A denied Screen Recording grant is an
+/// ordinary choice, and it left this polling forever.
 @MainActor
 @Observable
 public final class PermissionsMonitor {
@@ -36,17 +45,42 @@ public final class PermissionsMonitor {
         Snapshot(accessibility: accessibility, screenRecording: screenRecording)
     }
 
-    /// How often to re-check while something is outstanding. Fast enough that
-    /// ticking the checkbox feels instant, slow enough to be invisible in Activity
-    /// Monitor.
-    private static let pollInterval: TimeInterval = 0.75
+    /// How often to re-check while the user is looking at OpenTab's own UI.
+    ///
+    /// The onboarding window and Settings both show the state next to a button
+    /// that sends the user to System Settings, so it has to keep up with them
+    /// walking there and back.
+    private static let activePollInterval: TimeInterval = 0.75
+
+    /// How often to re-check otherwise.
+    ///
+    /// Nothing on screen is showing the state, and a grant that changes will be
+    /// noticed on the next application activation regardless — so this only has
+    /// to be a backstop for a change made with no activation at all, not a live
+    /// feed. At the fast rate it was a `tccd` round trip every 750 ms for the
+    /// entire life of the process.
+    private static let idlePollInterval: TimeInterval = 30
 
     // Plumbing, not state: changing these must not invalidate a SwiftUI view.
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var activationObserver: (any NSObjectProtocol)?
 
-    @ObservationIgnored private let accessibilityProbe: () -> Bool
-    @ObservationIgnored private let screenRecordingProbe: () -> Bool
+    @ObservationIgnored private let accessibilityProbe: @Sendable () -> Bool
+    @ObservationIgnored private let screenRecordingProbe: @Sendable () -> Bool
+
+    /// Where the probes run. Serial, so a slow answer delays only the next poll
+    /// rather than piling up round trips behind it.
+    @ObservationIgnored private let probeQueue = DispatchQueue(
+        label: "io.github.htopo.opentab.permissions", qos: .utility
+    )
+
+    /// True while a probe is in flight, so a slow `tccd` cannot accumulate a
+    /// backlog of identical questions.
+    @ObservationIgnored private var isProbing = false
+
+    /// The interval the running timer was created with, so the rate can change
+    /// without replacing a timer that is already correct.
+    @ObservationIgnored private var scheduledInterval: TimeInterval?
 
     /// Both probes are injected so tests can drive the monitor without a real TCC
     /// state — there is no way to grant or revoke a permission programmatically,
@@ -55,10 +89,12 @@ public final class PermissionsMonitor {
     /// - Parameters:
     ///   - accessibilityProbe: defaults to the live `AXIsProcessTrusted` check.
     ///   - screenRecordingProbe: defaults to the live CoreGraphics preflight.
-    public init(accessibilityProbe: @escaping () -> Bool = { AccessibilityPermission.isGranted },
-                screenRecordingProbe: @escaping () -> Bool) {
+    public init(accessibilityProbe: @escaping @Sendable () -> Bool = { AccessibilityPermission.isGranted },
+                screenRecordingProbe: @escaping @Sendable () -> Bool) {
         self.accessibilityProbe = accessibilityProbe
         self.screenRecordingProbe = screenRecordingProbe
+        // At construction there is no main actor to protect and nothing on
+        // screen yet, so the blocking read is the right one.
         self.accessibility = accessibilityProbe()
         self.screenRecording = screenRecordingProbe()
     }
@@ -99,12 +135,44 @@ public final class PermissionsMonitor {
 
     // MARK: - Polling
 
-    /// Re-reads both permissions and publishes any change.
+    /// Re-reads both permissions off the main actor and publishes any change.
+    ///
+    /// Nothing waits on the answer, which is the point: a `tccd` that takes a
+    /// second to reply now delays only the next poll instead of every keystroke
+    /// the switcher is meant to be handling.
     public func refresh() {
+        guard !isProbing else { return }
+        isProbing = true
+
+        let probeAccessibility = accessibilityProbe
+        let probeScreenRecording = screenRecordingProbe
+
+        probeQueue.async { [weak self] in
+            let probed = Snapshot(accessibility: probeAccessibility(),
+                                  screenRecording: probeScreenRecording())
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.isProbing = false
+                self.apply(probed)
+            }
+        }
+    }
+
+    /// Re-reads both permissions on the calling thread.
+    ///
+    /// For the two moments where the next line genuinely needs the answer:
+    /// constructing the monitor, and returning from a system prompt the user
+    /// has just dismissed. Everywhere else, use `refresh`.
+    public func refreshSynchronously() {
+        apply(Snapshot(accessibility: accessibilityProbe(),
+                       screenRecording: screenRecordingProbe()))
+    }
+
+    /// Publishes a freshly probed state. The only writer of either property.
+    private func apply(_ new: Snapshot) {
         let old = snapshot
-        accessibility = accessibilityProbe()
-        screenRecording = screenRecordingProbe()
-        let new = snapshot
+        accessibility = new.accessibility
+        screenRecording = new.screenRecording
 
         guard old != new else {
             scheduleTimerIfNeeded()
@@ -118,18 +186,25 @@ public final class PermissionsMonitor {
         onChange?(old, new)
     }
 
-    /// Runs the timer only while a permission is outstanding.
+    /// Runs the timer only while a permission is outstanding, at a rate that
+    /// depends on whether anyone is looking.
     private func scheduleTimerIfNeeded() {
         let everythingGranted = accessibility && screenRecording
 
         if everythingGranted {
             timer?.invalidate()
             timer = nil
+            scheduledInterval = nil
             return
         }
 
-        guard timer == nil else { return }
-        let timer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
+        // OpenTab becomes active only when its own windows are open, which are
+        // the only place the permission state is on screen.
+        let wanted = NSApp?.isActive == true ? Self.activePollInterval : Self.idlePollInterval
+        guard scheduledInterval != wanted else { return }
+
+        timer?.invalidate()
+        let timer = Timer.scheduledTimer(withTimeInterval: wanted, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
         }
         // Keep firing while a modal menu or window drag has the run loop in a
@@ -137,6 +212,7 @@ public final class PermissionsMonitor {
         // clicks somewhere.
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+        scheduledInterval = wanted
     }
 
     // MARK: - Actions
@@ -144,7 +220,8 @@ public final class PermissionsMonitor {
     /// Triggers the system Accessibility prompt.
     public func requestAccessibility() {
         AccessibilityPermission.requestPrompt()
-        refresh()
+        // The user has just answered a prompt and is looking at the result.
+        refreshSynchronously()
     }
 
     /// Opens the relevant System Settings pane.
