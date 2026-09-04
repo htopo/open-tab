@@ -298,6 +298,17 @@ public final class EventTap {
             previousFlags: previousFlags
         )
 
+        // The one decision that ends an interaction, and the one the switcher
+        // cannot second-guess: it is told the modifiers are up, it does not get
+        // to look. A release reported while the key is still down closes the
+        // switcher before its panel was ever due to appear, and from the
+        // outside that is indistinguishable from a deliberate quick tap.
+        if outcome == .modifiersReleased {
+            Log.input.notice(
+                "Modifiers reported released: flags=\(flags.rawValue, format: .hex) previous=\(previousFlags.rawValue, format: .hex) keyCode=\(keyCode)"
+            )
+        }
+
         if outcome != .ignore {
             noteDispatch()
             let handler = self.handler

@@ -87,6 +87,20 @@ final class SwitcherController {
     /// nil whenever they are down, or no interaction is running.
     private var modifiersUpSince: Date?
 
+    /// When the current interaction began, and whether its panel ever appeared.
+    ///
+    /// Together these say whether a switch that showed no list was a deliberate
+    /// quick tap or a hold whose release arrived far too early — which look
+    /// identical from the outside and have nothing in common underneath.
+    private var interactionStartedAt: DispatchTime?
+    private var didShowOverlay = false
+
+    /// Keeps App Nap off this process. See `start`.
+    private var activityAssertion: (any NSObjectProtocol)?
+
+    /// When the watchdog last ran, so it can notice the run loop falling behind.
+    private var lastWatchdogAt: DispatchTime?
+
     /// Last value handed to the tap, so only changes are logged.
     private var isPassingShortcutsThrough = false
 
@@ -197,6 +211,22 @@ final class SwitcherController {
         )
         self.tap = tap
 
+        // OpenTab is an accessory app with no Dock icon and, most of the time,
+        // no visible window — which is precisely the profile macOS puts to
+        // sleep. App Nap throttles a background app's timers, and every part of
+        // the hold-and-cycle interaction is a main run loop timer: the 150ms
+        // that decides whether the panel appears at all is one. A throttled
+        // timer fires after the release has already been handled, so the switch
+        // happens with no list ever shown — the app looks like it ignored being
+        // held rather than like it was asleep.
+        //
+        // Idle *system* sleep is deliberately left alone: keeping a laptop
+        // awake is not a trade a window switcher gets to make.
+        activityAssertion = ProcessInfo.processInfo.beginActivity(
+            options: .userInitiatedAllowingIdleSystemSleep,
+            reason: "Responding to a global keyboard shortcut"
+        )
+
         guard tap.install() else { return }
         observeFrontmostApplication()
         gestures.update(settings: gestureSettings)
@@ -205,6 +235,10 @@ final class SwitcherController {
     }
 
     func stop() {
+        if let activityAssertion {
+            ProcessInfo.processInfo.endActivity(activityAssertion)
+            self.activityAssertion = nil
+        }
         watchdogTimer?.invalidate()
         watchdogTimer = nil
         holdTimer?.invalidate()
@@ -293,7 +327,31 @@ final class SwitcherController {
         watchdogTimer = timer
     }
 
+    /// How late the two-second watchdog may be before it is worth reporting.
+    ///
+    /// This timer is not special: it is a main run loop timer like the one that
+    /// decides whether the switcher's panel appears. A run loop delivering this
+    /// one half a second late is delivering that one late too, and a hold
+    /// threshold that fires after the release has been handled shows no panel
+    /// at all.
+    private static let watchdogLateness: TimeInterval = 0.5
+
+    /// Above this, the machine was asleep rather than behind.
+    private static let watchdogSleepFloor: TimeInterval = 10
+
     private func checkInputHealth() {
+        let now = DispatchTime.now()
+        if let last = lastWatchdogAt {
+            let elapsed = Double(now.uptimeNanoseconds - last.uptimeNanoseconds) / 1_000_000_000
+            let late = elapsed - Self.watchdogInterval
+            if late > Self.watchdogLateness, late < Self.watchdogSleepFloor {
+                Log.input.error(
+                    "Main run loop is behind: a \(Self.watchdogInterval, format: .fixed(precision: 0))s timer took \(elapsed * 1000, format: .fixed(precision: 0))ms. The hold threshold is a timer on this same run loop, so the panel may not appear when the shortcut is held."
+                )
+            }
+        }
+        lastWatchdogAt = now
+
         // A disabled tap announces itself by delivering a `.tapDisabledBy…`
         // event, which the tap re-enables on. That is the path that works. The
         // path that does not is a tap disabled while it is not delivering
@@ -456,6 +514,8 @@ final class SwitcherController {
         // Build the list on the *first* press of an interaction only. Rebuilding
         // on every press would let the ordering shift under the user's fingers.
         if case .idle = machine.state {
+            interactionStartedAt = .now()
+            didShowOverlay = false
             activeAppearance = appearance.merging(shortcuts[index].appearance)
             machine.afterRelease = activeAppearance.afterRelease
             buildList(for: shortcuts[index])
@@ -756,6 +816,10 @@ final class SwitcherController {
         let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.dispatch(.holdThresholdElapsed) }
         }
+        // Stated rather than assumed. This is the timer the whole interaction
+        // turns on: fired late, the release is handled first and the panel is
+        // never shown.
+        timer.tolerance = 0
         RunLoop.main.add(timer, forMode: .common)
         holdTimer = timer
     }
@@ -927,9 +991,15 @@ final class SwitcherController {
         pointerAnchor = NSEvent.mouseLocation
 
         refreshOverlayContent()
-        panel.show(on: targetScreen(), fadeDuration: fadeInDuration)
+        let screen = targetScreen()
+        panel.show(on: screen, fadeDuration: fadeInDuration)
+        didShowOverlay = true
         gestures.setSwitcherOpen(true)
         updateSpaceKeyClaim()
+
+        Log.overlay.notice(
+            "Overlay shown: \(self.currentList.count) entries, frame \(NSStringFromRect(self.panel.frameForLogging), privacy: .public) on screen \(NSStringFromRect(screen.frame), privacy: .public)"
+        )
 
         // Alpha is checked after the fade should have finished, not before it
         // starts: a panel that is up, correctly sized, and invisible is the one
@@ -1163,8 +1233,14 @@ final class SwitcherController {
             return
         }
 
+        let heldFor = interactionStartedAt.map {
+            Double(DispatchTime.now().uptimeNanoseconds - $0.uptimeNanoseconds) / 1_000_000
+        } ?? 0
+
         let target = currentList[index]
-        Log.overlay.notice("Focusing \(target.qualifiedTitle, privacy: .public)")
+        Log.overlay.notice(
+            "Focusing \(target.qualifiedTitle, privacy: .public) — after \(heldFor, format: .fixed(precision: 0))ms, overlay shown: \(self.didShowOverlay)"
+        )
 
         if WindowActions.focus(target) {
             registry.noteFocus(target.id)
