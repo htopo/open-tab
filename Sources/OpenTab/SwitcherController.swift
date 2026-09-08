@@ -101,6 +101,13 @@ final class SwitcherController {
     /// When the watchdog last ran, so it can notice the run loop falling behind.
     private var lastWatchdogAt: DispatchTime?
 
+    /// Whether an application currently holds the keyboard exclusively.
+    private var isSecureInputActive = false
+
+    /// Called when the switcher becomes unable, or able again, to see the
+    /// keyboard. The argument is why, or nil once it can.
+    var onInputSuspended: ((String?) -> Void)?
+
     /// Last value handed to the tap, so only changes are logged.
     private var isPassingShortcutsThrough = false
 
@@ -358,8 +365,40 @@ final class SwitcherController {
         // anything — nothing arrives to announce it, and ⌘Tab is simply dead
         // until something else happens to call this. Until now the only
         // somethings were waking from sleep and a display change.
+        checkSecureInput()
         tap?.revalidate()
         recoverStrandedInteraction()
+    }
+
+    /// Notices an application taking or releasing exclusive hold of the keyboard.
+    ///
+    /// Nothing here repairs anything, because there is nothing broken to repair:
+    /// while a password field holds the keyboard, macOS delivers keystrokes only
+    /// to it, and shutting event taps out is the entire point of the mechanism.
+    /// What was missing was anyone saying so. A ⌘Tab that does nothing, with an
+    /// installed and enabled tap that is simply never called, is the least
+    /// explicable failure this app has.
+    private func checkSecureInput() {
+        let active = EventTap.isSecureInputActive
+        guard active != isSecureInputActive else { return }
+        isSecureInputActive = active
+
+        guard active else {
+            Log.input.notice("Keyboard released; the switcher can see shortcuts again")
+            // The tap may have been disabled while it was shut out, and the
+            // event that would have said so had nowhere to be delivered.
+            tap?.revalidate()
+            onInputSuspended?(nil)
+            return
+        }
+
+        // Whoever is frontmost is the likeliest holder, and naming it is what
+        // turns "⌘Tab is broken" into "the terminal is asking for a password".
+        let holder = NSWorkspace.shared.frontmostApplication?.localizedName
+        Log.input.notice(
+            "Keyboard held exclusively\(holder.map { " (frontmost: \($0))" } ?? "", privacy: .public); the switcher cannot see shortcuts until it is released"
+        )
+        onInputSuspended?(holder)
     }
 
     /// Ends an interaction whose modifiers are demonstrably no longer held.

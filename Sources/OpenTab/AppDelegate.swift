@@ -240,6 +240,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             gesture: store.settings.gesture
         )
         self.switcher = switcher
+        switcher.onInputSuspended = { [weak self] holder in
+            self?.menuBarController?.setSuspended(holder)
+        }
         switcher.start()
     }
 

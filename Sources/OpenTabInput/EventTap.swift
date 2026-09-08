@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
 import OpenTabCore
@@ -107,6 +108,23 @@ public final class EventTap {
         mutate(&_configuration)
         configLock.unlock()
     }
+
+    // MARK: - Secure input
+
+    /// Whether some application has taken exclusive hold of the keyboard.
+    ///
+    /// A password field does this — including a terminal prompting for one —
+    /// and while it holds, keyboard events go only to that application. Event
+    /// taps are shut out by design: it is the mechanism that stops anything
+    /// else reading a password as it is typed, and it is not something to work
+    /// around.
+    ///
+    /// So this is not a fault to repair, it is a state to report. Everything
+    /// else the switcher does keeps working; it simply cannot see the keyboard
+    /// until the password is dealt with. Without naming it, that is a ⌘Tab that
+    /// does nothing and writes nothing to the log — the tap is installed,
+    /// enabled, and never called.
+    public static var isSecureInputActive: Bool { IsSecureEventInputEnabled() }
 
     // MARK: - Lifecycle
 

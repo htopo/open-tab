@@ -10,6 +10,9 @@ import OpenTabCore
 final class MenuBarController {
 
     private var statusItem: NSStatusItem?
+
+    /// Shown only while something else holds the keyboard. See `setSuspended`.
+    private var suspensionItem: NSMenuItem?
     private let onOpenSettings: () -> Void
     private let onLogWindowList: () -> Void
     private let onQuit: () -> Void
@@ -70,6 +73,16 @@ final class MenuBarController {
         let header = NSMenuItem(title: "OpenTab \(AppInfo.version)", action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
+
+        // Hidden unless it applies. A permanent "everything is fine" line is
+        // noise; this one only exists to answer a question the user is already
+        // asking, in the one place they will go to ask it.
+        let suspension = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        suspension.isEnabled = false
+        suspension.isHidden = true
+        menu.addItem(suspension)
+        suspensionItem = suspension
+
         menu.addItem(.separator())
 
         menu.addItem(item(title: "Settings…", key: ",", action: #selector(Actions.openSettings)))
@@ -93,6 +106,34 @@ final class MenuBarController {
             menuItem.target = actions
         }
         return menu
+    }
+
+    // MARK: - Suspension
+
+    /// Reports that the switcher cannot see the keyboard, and why.
+    ///
+    /// macOS lets an application take the keyboard exclusively while it is
+    /// asking for a password, and a terminal at an `ssh` prompt does exactly
+    /// that. Shortcuts stop reaching OpenTab for as long as it lasts — by
+    /// design, and not something to defeat: it is what stops anything else
+    /// reading a password as it is typed.
+    ///
+    /// The icon dims rather than changes shape. Someone who did not go looking
+    /// should see nothing new in their menu bar; someone whose ⌘Tab just went
+    /// dead should find the answer on the first click.
+    ///
+    /// - Parameter holder: the application holding the keyboard, if known. nil
+    ///   means the keyboard has been released.
+    func setSuspended(_ holder: String?) {
+        statusItem?.button?.appearsDisabled = holder != nil
+
+        guard let suspensionItem else { return }
+        if let holder {
+            suspensionItem.title = "Paused — \(holder) is asking for a password"
+            suspensionItem.isHidden = false
+        } else {
+            suspensionItem.isHidden = true
+        }
     }
 
     private func item(title: String, key: String, action: Selector) -> NSMenuItem {
