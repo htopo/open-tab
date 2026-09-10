@@ -104,6 +104,19 @@ final class SwitcherController {
     /// Whether an application currently holds the keyboard exclusively.
     private var isSecureInputActive = false
 
+    /// Shortcuts registered with the system, live only while the tap is blind.
+    private let hotKeys = HotKeyRegistry()
+
+    /// Watches for the modifiers coming up when no event will say so.
+    private var modifierPollTimer: Timer?
+
+    /// How often to ask what is physically held during a hot-key interaction.
+    ///
+    /// The release ends the switch, so this is the delay between letting go and
+    /// the window coming forward. Short enough not to be felt, and it runs only
+    /// while an interaction driven this way is open.
+    private static let modifierPollInterval: TimeInterval = 0.03
+
     /// Called when the switcher becomes unable, or able again, to see the
     /// keyboard. The argument is why, or nil once it can.
     var onInputSuspended: ((String?) -> Void)?
@@ -190,6 +203,8 @@ final class SwitcherController {
         gestures.onTrigger = { [weak self] in
             self?.beginOrAdvance(shortcut: 0, reversed: false)
         }
+
+        hotKeys.onFire = { [weak self] index in self?.hotKeyFired(index) }
         gestures.onNavigate = { [weak self] delta in
             self?.navigate(delta, source: "gesture")
         }
@@ -242,6 +257,8 @@ final class SwitcherController {
     }
 
     func stop() {
+        hotKeys.unregister()
+        stopModifierPolling()
         if let activityAssertion {
             ProcessInfo.processInfo.endActivity(activityAssertion)
             self.activityAssertion = nil
@@ -385,6 +402,11 @@ final class SwitcherController {
 
         guard active else {
             Log.input.notice("Keyboard released; the switcher can see shortcuts again")
+            // Back to the tap, which sees ⇧ and every other key the hot key
+            // path cannot. Leaving the registration up would also catch a
+            // shortcut deliberately passed through to a virtual machine.
+            hotKeys.unregister()
+            stopModifierPolling()
             // The tap may have been disabled while it was shut out, and the
             // event that would have said so had nowhere to be delivered.
             tap?.revalidate()
@@ -399,6 +421,60 @@ final class SwitcherController {
             "Keyboard held exclusively\(holder.map { " (frontmost: \($0))" } ?? "", privacy: .public); the switcher cannot see shortcuts until it is released"
         )
         onInputSuspended?(holder)
+
+        let count = hotKeys.register(shortcuts.map(\.combo))
+        Log.input.notice("Registered \(count) shortcut(s) with the system as a fallback")
+    }
+
+    // MARK: - Working without the event stream
+
+    /// Runs one step of an interaction driven by a system hot key.
+    ///
+    /// Everything downstream is the ordinary path: the same state machine, the
+    /// same panel, the same commit. Only the two ends differ — the system hands
+    /// over the press instead of the tap intercepting it, and the release is
+    /// noticed by asking rather than by being told.
+    private func hotKeyFired(_ index: Int) {
+        guard shortcuts.indices.contains(index) else { return }
+
+        // ⇧ cannot come from the hot key: Carbon matches modifiers exactly, so
+        // ⌘⇧Tab is a different registration. Reading what is held right now
+        // gets the same answer without one.
+        let held = ModifierSet(eventFlags: CGEventSource.flagsState(.combinedSessionState))
+        beginOrAdvance(shortcut: index, reversed: held.contains(.shift))
+        startModifierPolling(for: index)
+    }
+
+    /// Ends the interaction when the shortcut's modifiers are no longer held.
+    ///
+    /// `flagsState` reports what the keyboard is doing now, which is a question
+    /// rather than a subscription — so it still answers while the event stream
+    /// is going somewhere else entirely.
+    private func startModifierPolling(for index: Int) {
+        guard modifierPollTimer == nil, shortcuts.indices.contains(index) else { return }
+        let required = shortcuts[index].combo.modifiers
+
+        let timer = Timer.scheduledTimer(withTimeInterval: Self.modifierPollInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                guard self.machine.state != .idle else {
+                    self.stopModifierPolling()
+                    return
+                }
+                let held = ModifierSet(eventFlags: CGEventSource.flagsState(.combinedSessionState))
+                guard held.isDisjoint(with: required) else { return }
+                self.stopModifierPolling()
+                self.dispatch(.modifiersReleased)
+            }
+        }
+        timer.tolerance = 0
+        RunLoop.main.add(timer, forMode: .common)
+        modifierPollTimer = timer
+    }
+
+    private func stopModifierPolling() {
+        modifierPollTimer?.invalidate()
+        modifierPollTimer = nil
     }
 
     /// Ends an interaction whose modifiers are demonstrably no longer held.
@@ -1217,6 +1293,7 @@ final class SwitcherController {
         // A repeat left running past the end of the interaction would keep moving
         // a selection nobody is looking at.
         endShiftRepeat()
+        stopModifierPolling()
         panel.hide(fadeDuration: fadeOutDuration)
         highlighter.hide()
         gestures.setSwitcherOpen(false)

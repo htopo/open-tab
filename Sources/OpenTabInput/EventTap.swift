@@ -321,8 +321,11 @@ public final class EventTap {
         // to look. A release reported while the key is still down closes the
         // switcher before its panel was ever due to appear, and from the
         // outside that is indistinguishable from a deliberate quick tap.
+        // Debug rather than notice: it fires on every switch, and it drowned
+        // the log it was added to clarify. It answered its question — the flags
+        // were exactly right — and is kept for the next time one is asked.
         if outcome == .modifiersReleased {
-            Log.input.notice(
+            Log.input.debug(
                 "Modifiers reported released: flags=\(flags.rawValue, format: .hex) previous=\(previousFlags.rawValue, format: .hex) keyCode=\(keyCode)"
             )
         }
