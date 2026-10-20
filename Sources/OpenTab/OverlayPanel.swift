@@ -287,7 +287,18 @@ final class OverlayPanel {
 
         switch placement {
         case .activeScreen:
-            return fallback
+            // The screen being typed on, which is the one holding the frontmost
+            // application's front window. `NSScreen.main` answers a different
+            // question for an app that is never key — roughly "where was the
+            // last click" — so a click on one display followed by typing on
+            // the other put the switcher in front of the wrong one.
+            if let screen = screenOfFrontmostWindow(in: screens) { return screen }
+            if let target = focusedWindowDisplay,
+               let screen = screens.first(where: { displayID(of: $0) == target }) {
+                return screen
+            }
+            let location = NSEvent.mouseLocation
+            return screens.first { $0.frame.contains(location) } ?? fallback
 
         case .screenWithMouse:
             let location = NSEvent.mouseLocation
@@ -295,13 +306,43 @@ final class OverlayPanel {
 
         case .screenWithFocusedWindow:
             guard let target = focusedWindowDisplay else { return fallback }
-            return screens.first { screen in
-                let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
-                return number.map { CGDirectDisplayID($0.uint32Value) } == target
-            } ?? fallback
+            return screens.first { displayID(of: $0) == target } ?? fallback
 
         case .specificDisplay(let name):
             return screens.first { $0.localizedName == name } ?? fallback
         }
+    }
+
+    private static func displayID(of screen: NSScreen) -> CGDirectDisplayID? {
+        let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+        return number.map { CGDirectDisplayID($0.uint32Value) }
+    }
+
+    /// The screen under the centre of the frontmost application's front window.
+    ///
+    /// Asked of the window server at the moment the panel opens, rather than
+    /// taken from the registry, because focus can move between enumerations.
+    private static func screenOfFrontmostWindow(in screens: [NSScreen]) -> NSScreen? {
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+              let primary = screens.first,
+              let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                                    kCGNullWindowID) as? [[String: Any]]
+        else { return nil }
+
+        // Front to back, so the first match is the window being worked in.
+        for window in info {
+            guard (window[kCGWindowOwnerPID as String] as? pid_t) == pid,
+                  (window[kCGWindowLayer as String] as? Int) == 0,
+                  let bounds = window[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation: bounds),
+                  rect.width > 40, rect.height > 40
+            else { continue }
+
+            // Window server coordinates start top-left of the primary display;
+            // AppKit's start bottom-left.
+            let centre = NSPoint(x: rect.midX, y: primary.frame.maxY - rect.midY)
+            if let screen = screens.first(where: { $0.frame.contains(centre) }) { return screen }
+        }
+        return nil
     }
 }
