@@ -55,29 +55,23 @@ public enum WindowActions {
         }
 
         // Recovered from the window server because the application would not
-        // publish it over Accessibility. There is no element to raise, and
-        // activating an application does not travel between Desktops — only
-        // raising a window on one does. So the Desktop is changed first.
+        // publish it over Accessibility. There is no element to raise, so the
+        // application is brought forward and `raiseOnceItAppears` catches the
+        // window if activating makes the application publish it.
         //
-        // That is what makes the window reachable at all: applications that hide
-        // windows from Accessibility typically hide the ones they are not showing,
-        // and publish them once their Desktop is in front. Moving there turns an
-        // unreachable window into an ordinary one, which `raiseOnceItAppears`
-        // then picks up.
+        // The Desktop is deliberately not changed here. Setting the current Space
+        // through the window server behind the Dock's back leaves the Dock with a
+        // stale idea of which Desktop is showing, and Mission Control then
+        // animates with the old window frozen in front until the Dock restarts.
         guard let element = window.axElement else {
             if runningApp.isHidden { runningApp.unhide() }
-
-            var travelled = false
-            if let space = window.spaceID {
-                travelled = PrivateSymbols.switchToSpace(space)
-            }
 
             let activated = runningApp.activate()
 
             Log.accessibility.notice(
                 """
                 Focus \(window.qualifiedTitle, privacy: .public) with no accessibility element: \
-                movedToDesktop=\(travelled) activated=\(activated) \
+                activated=\(activated) \
                 space=\(window.spaceID.map(String.init) ?? "unknown", privacy: .public)
                 """
             )
